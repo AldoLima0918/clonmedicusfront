@@ -661,6 +661,7 @@ const AgendarCita = () => {
                     <NuevoPacienteForm
                       onPatientAdded={handlePatientAdded}
                       onCancel={() => setDialogPacienteOpen(false)}
+                      modoReducido={true}
                     />
                   </DialogContent>
                 </Dialog>
@@ -914,15 +915,35 @@ const AgendarCita = () => {
                       head_cell:
                         "text-muted-foreground rounded-md w-10 font-medium text-[0.7rem] uppercase tracking-wide flex-1 text-center",
                       row: "flex w-full mt-1",
-                      cell: "text-center text-sm p-0 relative flex-1 flex items-center justify-center",
-                      day: "h-10 w-10 p-0 font-normal rounded-xl transition-all duration-200 hover:bg-primary/10 hover:text-primary hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary/40",
+                      cell:
+                        "text-center text-sm p-0 relative flex-1 flex items-center justify-center",
+
+                      day:
+                        "h-10 w-10 p-0 font-normal rounded-xl transition-all duration-200 " +
+                        "text-foreground hover:bg-primary/10 hover:text-primary hover:scale-105 " +
+                        "focus:outline-none focus:ring-2 focus:ring-primary/40",
+
+                      // Día seleccionado
                       day_selected:
-                        "bg-primary text-primary-foreground font-semibold shadow-md shadow-primary/30 hover:bg-primary hover:text-primary-foreground hover:scale-105",
+                        "bg-primary !text-foreground font-semibold shadow-md shadow-primary/30 " +
+                        "hover:bg-primary hover:!text-foreground hover:scale-105",
+
+                      // Día de hoy
                       day_today:
-                        "bg-primary/10 text-primary font-semibold rounded-xl ring-1 ring-primary/30",
-                      day_outside: "text-muted-foreground/30 opacity-50",
+                        "bg-primary/10 !text-primary font-semibold rounded-xl ring-1 ring-primary/30 " +
+                        "aria-selected:!bg-primary aria-selected:!text-foreground " +
+                        "aria-selected:!ring-0 aria-selected:shadow-md aria-selected:shadow-primary/30",
+
+                      // Días de otros meses
+                      day_outside:
+                        "text-muted-foreground/70 opacity-100",
+
+                      // Días anteriores: SIGUEN DESHABILITADOS,
+                      // pero ahora se pueden leer claramente.
                       day_disabled:
-                        "text-muted-foreground/40 opacity-50 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground/40 hover:scale-100",
+                        "text-foreground/60 opacity-100 cursor-not-allowed " +
+                        "hover:bg-transparent hover:text-foreground/60 hover:scale-100",
+
                       day_hidden: "invisible",
                     }}
                     components={{

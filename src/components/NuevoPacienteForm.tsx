@@ -35,6 +35,7 @@ interface PatientFormData {
 interface NuevoPacienteFormProps {
   onPatientAdded: (patient: PatientFormData) => void;
   onCancel: () => void;
+  modoReducido?: boolean;
 }
 
 const PAISES = [
@@ -67,11 +68,12 @@ const CI_MAX_LENGTH = 10;
 const NuevoPacienteForm = ({
   onPatientAdded,
   onCancel,
+  modoReducido = false,
 }: NuevoPacienteFormProps) => {
   const [formData, setFormData] = useState<PatientFormData>({
     nombreCompleto: "",
     fechaNacimiento: "",
-    genero: "Masculino",
+    genero: modoReducido ? "" : "Masculino",
     telefono: "",
     email: "",
     direccion: "",
@@ -229,6 +231,11 @@ const NuevoPacienteForm = ({
       return;
     }
 
+    if (modoReducido && !formData.genero) {
+      toast.error("Por favor seleccione un género");
+      return;
+    }
+
     try {
       const paciente = {
         nombre_Completo: formData.nombreCompleto,
@@ -381,14 +388,18 @@ const NuevoPacienteForm = ({
           <select
             id="genero"
             name="genero"
-            value={formData.genero || "Masculino"}
+            value={formData.genero || ""}
             onChange={handleChange}
             required
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
+            {modoReducido && (
+              <option value="" disabled>
+                Seleccione género
+              </option>
+            )}
             <option value="Masculino">Masculino</option>
             <option value="Femenino">Femenino</option>
-            <option value="Otro">Otro</option>
           </select>
         </div>
 
@@ -431,89 +442,93 @@ const NuevoPacienteForm = ({
           )}
         </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Mail className="h-4 w-4 text-muted-foreground" />
-            <Label htmlFor="email" className="font-medium">
-              Correo Electrónico
-            </Label>
-          </div>
-          <Input
-            id="email"
-            name="email"
-            type="email"
-            value={formData.email || ""}
-            onChange={handleChange}
-            placeholder="correo@ejemplo.com"
-          />
-        </div>
+        {/* Campos que solo se muestran cuando NO es modo reducido */}
+        {!modoReducido && (
+          <>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="email" className="font-medium">
+                  Correo Electrónico
+                </Label>
+              </div>
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                value={formData.email || ""}
+                onChange={handleChange}
+                placeholder="correo@ejemplo.com"
+              />
+            </div>
 
-        <div className="space-y-2 md:col-span-2">
-          <div className="flex items-center gap-2">
-            <MapPin className="h-4 w-4 text-muted-foreground" />
-            <Label htmlFor="direccion" className="font-medium">
-              Dirección
-            </Label>
-          </div>
-          <Input
-            id="direccion"
-            name="direccion"
-            value={formData.direccion || ""}
-            onChange={handleChange}
-            placeholder="Dirección completa"
-          />
-        </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="direccion" className="font-medium">
+                  Dirección
+                </Label>
+              </div>
+              <Input
+                id="direccion"
+                name="direccion"
+                value={formData.direccion || ""}
+                onChange={handleChange}
+                placeholder="Dirección completa"
+              />
+            </div>
 
-        {/* Información Médica */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Droplet className="h-4 w-4 text-muted-foreground" />
-            <Label htmlFor="tipoSangre" className="font-medium">
-              Tipo de Sangre
-            </Label>
-          </div>
-          <Input
-            id="tipoSangre"
-            name="tipoSangre"
-            value={formData.tipoSangre || ""}
-            onChange={handleChange}
-            placeholder="Ej: O+, A-, etc."
-          />
-        </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Droplet className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="tipoSangre" className="font-medium">
+                  Tipo de Sangre
+                </Label>
+              </div>
+              <Input
+                id="tipoSangre"
+                name="tipoSangre"
+                value={formData.tipoSangre || ""}
+                onChange={handleChange}
+                placeholder="Ej: O+, A-, etc."
+              />
+            </div>
 
-        <div className="space-y-2 md:col-span-2">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-            <Label htmlFor="alergias" className="font-medium">
-              Alergias
-            </Label>
-          </div>
-          <Textarea
-            id="alergias"
-            name="alergias"
-            value={formData.alergias || ""}
-            onChange={handleChange}
-            placeholder="Alergias conocidas del paciente"
-            className="min-h-[80px]"
-          />
-        </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="alergias" className="font-medium">
+                  Alergias
+                </Label>
+              </div>
+              <Textarea
+                id="alergias"
+                name="alergias"
+                value={formData.alergias || ""}
+                onChange={handleChange}
+                placeholder="Alergias conocidas del paciente"
+                className="min-h-[80px]"
+              />
+            </div>
 
-        <div className="space-y-2 md:col-span-2">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-            <Label htmlFor="enfermedadbase" className="font-medium">
-              Enfermedad de base
-            </Label>
-          </div>
-          <Textarea
-            id="enfermedadbase"
-            name="enfermedadbase"
-            value={formData.enfermedadbase || ""}
-            onChange={handleChange}
-            placeholder="Enfermedad de base conocidas del paciente"
-            className="min-h-[80px]"
-          />
-        </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                <Label htmlFor="enfermedadbase" className="font-medium">
+                  Enfermedad de base
+                </Label>
+              </div>
+              <Textarea
+                id="enfermedadbase"
+                name="enfermedadbase"
+                value={formData.enfermedadbase || ""}
+                onChange={handleChange}
+                placeholder="Enfermedad de base conocidas del paciente"
+                className="min-h-[80px]"
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Botones de acción */}
