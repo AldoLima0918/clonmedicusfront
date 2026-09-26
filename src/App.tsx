@@ -2,7 +2,13 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import AppSidebar from "./components/AppSidebar";
 import Index from "./pages/Index";
@@ -21,13 +27,12 @@ import GestionUsuarios from "./pages/GestionUsuarios";
 import ListaPacientes from "./pages/ListaPacientes";
 import NotFound from "./pages/NotFound";
 import DoctorCalendar from "./pages/DoctorCalendar";
+import Mensajes from "./pages/Mensajes";
 
 const queryClient = new QueryClient();
 
 /* ─────────────────────────────────────────────
    Layout principal con Sidebar
-   - Mobile: columna (header arriba + contenido abajo)
-   - Desktop: fila (sidebar izquierda + contenido derecha)
    ───────────────────────────────────────────── */
 const AppLayout = ({ children }: { children: React.ReactNode }) => (
   <div className="min-h-screen flex flex-col md:flex-row w-full bg-background">
@@ -81,58 +86,74 @@ const Page = ({
 );
 
 /* ─────────────────────────────────────────────
+   Mensajes flotantes globales (oculto en /login)
+   ───────────────────────────────────────────── */
+const MensajesGlobal = () => {
+  const location = useLocation();
+  const { isAuthenticated } = useAuth();
+
+  if (location.pathname === "/login") return null;
+  if (!isAuthenticated) return null;
+
+  return <Mensajes />;
+};
+
+/* ─────────────────────────────────────────────
    Rutas
    ───────────────────────────────────────────── */
 const AppRoutes = () => {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
+    <>
+      <MensajesGlobal />
+      <Routes>
+        <Route path="/login" element={<Login />} />
 
-      <Route path="/" element={<Page><Index /></Page>} />
+        <Route path="/" element={<Page><Index /></Page>} />
 
-      <Route path="/agendar-cita" element={<Page><AgendarCita /></Page>} />
+        <Route path="/agendar-cita" element={<Page><AgendarCita /></Page>} />
 
-      <Route path="/lista-citas" element={<Page><ListaCitas /></Page>} />
+        <Route path="/lista-citas" element={<Page><ListaCitas /></Page>} />
 
-      <Route path="/cobros" element={<Page><Cobros /></Page>} />
+        <Route path="/cobros" element={<Page><Cobros /></Page>} />
 
-      <Route path="/historial-pagos" element={<Page><HistorialPagos /></Page>} />
+        <Route path="/historial-pagos" element={<Page><HistorialPagos /></Page>} />
 
-      <Route path="/control-caja" element={<Page><ControlCaja /></Page>} />
+        <Route path="/control-caja" element={<Page><ControlCaja /></Page>} />
 
-      <Route path="/lista-precios" element={<Page><ListaPrecios /></Page>} />
+        <Route path="/lista-precios" element={<Page><ListaPrecios /></Page>} />
 
-      <Route path="/lista-pacientes" element={<Page><ListaPacientes /></Page>} />
+        <Route path="/lista-pacientes" element={<Page><ListaPacientes /></Page>} />
 
-      <Route path="/lista-especialidad" element={<Page><ListaEspecialidad /></Page>} />
+        <Route path="/lista-especialidad" element={<Page><ListaEspecialidad /></Page>} />
 
-      <Route path="/pacientes-dia" element={<Page><PacientesDia /></Page>} />
+        <Route path="/pacientes-dia" element={<Page><PacientesDia /></Page>} />
 
-      <Route path="/pacientes" element={<Page><Pacientes /></Page>} />
+        <Route path="/pacientes" element={<Page><Pacientes /></Page>} />
 
-      <Route path="/gestion-usuarios" element={<Page><GestionUsuarios /></Page>} />
+        <Route path="/gestion-usuarios" element={<Page><GestionUsuarios /></Page>} />
 
-      <Route
-        path="/historial-clinico/:id"
-        element={<Page><HistorialClinico isSidebarVisible={true} /></Page>}
-      />
+        <Route
+          path="/historial-clinico/:id"
+          element={<Page><HistorialClinico isSidebarVisible={true} /></Page>}
+        />
 
-      <Route
-        path="/agenda"
-        element={<Page allowedRoles={["doctor"]}><DoctorCalendar /></Page>}
-      />
+        <Route
+          path="/agenda"
+          element={<Page allowedRoles={["doctor"]}><DoctorCalendar /></Page>}
+        />
 
-      <Route
-        path="/agenda-doctor"
-        element={
-          <Page allowedRoles={["administrador", "secretaria"]}>
-            <DoctorCalendar />
-          </Page>
-        }
-      />
+        <Route
+          path="/agenda-doctor"
+          element={
+            <Page allowedRoles={["administrador", "secretaria"]}>
+              <DoctorCalendar />
+            </Page>
+          }
+        />
 
-      <Route path="*" element={<Page><NotFound /></Page>} />
-    </Routes>
+        <Route path="*" element={<Page><NotFound /></Page>} />
+      </Routes>
+    </>
   );
 };
 
