@@ -62,31 +62,93 @@ const ChatWindow = ({
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [texto, setTexto] = useState("");
   const [enviando, setEnviando] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Guardamos el último id de mensaje para saber si llegó uno nuevo
+  const lastMessageIdRef = useRef<string | null>(null);
+  // Sabemos si el usuario está pegado al fondo
+  const isAtBottomRef = useRef(true);
+  // Evita que el primer render haga scroll (queremos bajar al abrir, sí, pero una vez)
+  const firstLoadRef = useRef(true);
 
-  const cargar = useCallback(async () => {
-    const data = await getMensajes(contacto.id);
-    setMensajes(data);
-    await marcarComoLeidos(contacto.id);
-    notificarCambio();
-  }, [contacto.id]);
+  /* ── Cargar mensajes (sin notificar, para evitar bucles) ── */
+  const cargar = useCallback(
+    async (opts?: { marcarLeidos?: boolean }) => {
+      const data = await getMensajes(contacto.id);
+      setMensajes(data);
 
+      if (opts?.marcarLeidos !== false) {
+        await marcarComoLeidos(contacto.id);
+      }
+    },
+    [contacto.id]
+  );
+
+  /* ── Carga inicial al abrir el chat ── */
   useEffect(() => {
-    cargar();
+    firstLoadRef.current = true;
+    lastMessageIdRef.current = null;
+    isAtBottomRef.current = true;
+    cargar().then(() => {
+      // Forzar scroll al fondo tras la carga inicial
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      });
+    });
   }, [cargar]);
 
+  /* ── Suscripción a cambios externos (mensajes entrantes) ── */
   useEffect(() => {
     const unsub = suscribirseACambios(() => {
-      cargar();
+      // Recargamos sin marcar como leídos automáticamente si el chat
+      // está minimizado o el usuario está leyendo arriba.
+      cargar({ marcarLeidos: !minimized && isAtBottomRef.current });
     });
     return unsub;
-  }, [cargar]);
+  }, [cargar, minimized]);
 
+  /* ── Auto-scroll SOLO cuando llega un mensaje nuevo y el usuario está al fondo ── */
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (mensajes.length === 0) return;
+    const last = mensajes[mensajes.length - 1];
+
+    // Primera carga: siempre bajar
+    if (firstLoadRef.current) {
+      firstLoadRef.current = false;
+      lastMessageIdRef.current = last.id;
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      });
+      return;
     }
-  }, [mensajes, minimized]);
+
+    // Si hay un mensaje nuevo distinto al último visto
+    if (last.id !== lastMessageIdRef.current) {
+      lastMessageIdRef.current = last.id;
+      // Solo bajar si el usuario estaba al fondo
+      if (isAtBottomRef.current) {
+        requestAnimationFrame(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          }
+        });
+      }
+    }
+  }, [mensajes]);
+
+  /* ── Detectar si el usuario está cerca del fondo ── */
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const threshold = 40; // px
+    const atBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    isAtBottomRef.current = atBottom;
+  };
 
   const handleEnviar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +158,10 @@ const ChatWindow = ({
     try {
       await enviarMensaje(contacto.id, trimmed);
       setTexto("");
-      await cargar();
+      // Tras enviar, forzamos scroll al fondo
+      isAtBottomRef.current = true;
+      await cargar({ marcarLeidos: false });
+      notificarCambio();
     } finally {
       setEnviando(false);
     }
@@ -107,7 +172,6 @@ const ChatWindow = ({
       className={cn(
         "fixed z-50 flex flex-col overflow-hidden rounded-t-xl shadow-2xl border border-border/60 bg-background",
         "transition-all duration-300 ease-out",
-        // Desktop: abajo derecha, al lado del botón
         "bottom-0 right-4 md:right-24",
         minimized ? "h-12 w-64" : "h-[420px] w-[320px] sm:w-[340px]"
       )}
@@ -167,11 +231,12 @@ const ChatWindow = ({
         </button>
       </div>
 
-      {/* Body (solo si no está minimizado) */}
+      {/* Body */}
       {!minimized && (
         <>
           <div
             ref={scrollRef}
+            onScroll={handleScroll}
             className="flex-1 overflow-y-auto px-3 py-3 space-y-2 bg-muted/20"
           >
             {mensajes.length === 0 && (
@@ -273,7 +338,6 @@ const ContactosPanel = ({
         "w-[300px] sm:w-[340px] max-h-[480px]"
       )}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
@@ -293,7 +357,6 @@ const ContactosPanel = ({
         </button>
       </div>
 
-      {/* Buscador */}
       <div className="px-3 py-2 border-b border-border/40">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -306,7 +369,6 @@ const ContactosPanel = ({
         </div>
       </div>
 
-      {/* Lista */}
       <div className="flex-1 overflow-y-auto py-1">
         {filtrados.length === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
@@ -417,7 +479,6 @@ const Mensajes = () => {
   const handleTogglePanel = () => {
     setPanelAbierto((prev) => {
       const next = !prev;
-      // Si vamos a ABRIR el panel y hay un chat activo, lo minimizamos
       if (next && chatActivo) {
         setChatMinimizado(true);
       }
@@ -427,7 +488,6 @@ const Mensajes = () => {
 
   return (
     <>
-      {/* Panel de contactos */}
       {panelAbierto && (
         <ContactosPanel
           contactos={contactos}
@@ -437,7 +497,6 @@ const Mensajes = () => {
         />
       )}
 
-      {/* Ventana de chat */}
       {chatActivo && (
         <ChatWindow
           contacto={chatActivo}
@@ -447,7 +506,6 @@ const Mensajes = () => {
         />
       )}
 
-      {/* Botón flotante */}
       <button
         onClick={handleTogglePanel}
         className={cn(
