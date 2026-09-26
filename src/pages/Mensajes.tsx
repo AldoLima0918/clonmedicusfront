@@ -19,9 +19,9 @@ import {
   marcarComoLeidos,
   getNoLeidosPorContacto,
   getTotalNoLeidos,
-  simularMensajeEntrante,
   suscribirseACambios,
   notificarCambio,
+  iniciarPolling,
   type Contacto,
   type Mensaje,
 } from "@/api/mensajesapi";
@@ -64,19 +64,14 @@ const ChatWindow = ({
   const [enviando, setEnviando] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Guardamos el último id de mensaje para saber si llegó uno nuevo
-  const lastMessageIdRef = useRef<string | null>(null);
-  // Sabemos si el usuario está pegado al fondo
+  const lastMessageIdRef = useRef<number | null>(null);
   const isAtBottomRef = useRef(true);
-  // Evita que el primer render haga scroll (queremos bajar al abrir, sí, pero una vez)
   const firstLoadRef = useRef(true);
 
-  /* ── Cargar mensajes (sin notificar, para evitar bucles) ── */
   const cargar = useCallback(
     async (opts?: { marcarLeidos?: boolean }) => {
       const data = await getMensajes(contacto.id);
       setMensajes(data);
-
       if (opts?.marcarLeidos !== false) {
         await marcarComoLeidos(contacto.id);
       }
@@ -84,13 +79,11 @@ const ChatWindow = ({
     [contacto.id]
   );
 
-  /* ── Carga inicial al abrir el chat ── */
   useEffect(() => {
     firstLoadRef.current = true;
     lastMessageIdRef.current = null;
     isAtBottomRef.current = true;
     cargar().then(() => {
-      // Forzar scroll al fondo tras la carga inicial
       requestAnimationFrame(() => {
         if (scrollRef.current) {
           scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -99,22 +92,17 @@ const ChatWindow = ({
     });
   }, [cargar]);
 
-  /* ── Suscripción a cambios externos (mensajes entrantes) ── */
   useEffect(() => {
     const unsub = suscribirseACambios(() => {
-      // Recargamos sin marcar como leídos automáticamente si el chat
-      // está minimizado o el usuario está leyendo arriba.
       cargar({ marcarLeidos: !minimized && isAtBottomRef.current });
     });
     return unsub;
   }, [cargar, minimized]);
 
-  /* ── Auto-scroll SOLO cuando llega un mensaje nuevo y el usuario está al fondo ── */
   useEffect(() => {
     if (mensajes.length === 0) return;
     const last = mensajes[mensajes.length - 1];
 
-    // Primera carga: siempre bajar
     if (firstLoadRef.current) {
       firstLoadRef.current = false;
       lastMessageIdRef.current = last.id;
@@ -126,10 +114,8 @@ const ChatWindow = ({
       return;
     }
 
-    // Si hay un mensaje nuevo distinto al último visto
     if (last.id !== lastMessageIdRef.current) {
       lastMessageIdRef.current = last.id;
-      // Solo bajar si el usuario estaba al fondo
       if (isAtBottomRef.current) {
         requestAnimationFrame(() => {
           if (scrollRef.current) {
@@ -140,14 +126,12 @@ const ChatWindow = ({
     }
   }, [mensajes]);
 
-  /* ── Detectar si el usuario está cerca del fondo ── */
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    const threshold = 40; // px
-    const atBottom =
+    const threshold = 40;
+    isAtBottomRef.current =
       el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    isAtBottomRef.current = atBottom;
   };
 
   const handleEnviar = async (e: React.FormEvent) => {
@@ -158,7 +142,6 @@ const ChatWindow = ({
     try {
       await enviarMensaje(contacto.id, trimmed);
       setTexto("");
-      // Tras enviar, forzamos scroll al fondo
       isAtBottomRef.current = true;
       await cargar({ marcarLeidos: false });
       notificarCambio();
@@ -318,7 +301,7 @@ const ContactosPanel = ({
   onClose,
 }: {
   contactos: Contacto[];
-  noLeidos: Record<string, number>;
+  noLeidos: Record<number, number>;
   onSelect: (c: Contacto) => void;
   onClose: () => void;
 }) => {
@@ -338,6 +321,7 @@ const ContactosPanel = ({
         "w-[300px] sm:w-[340px] max-h-[480px]"
       )}
     >
+      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
@@ -357,6 +341,7 @@ const ContactosPanel = ({
         </button>
       </div>
 
+      {/* Buscador */}
       <div className="px-3 py-2 border-b border-border/40">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -369,6 +354,7 @@ const ContactosPanel = ({
         </div>
       </div>
 
+      {/* Lista */}
       <div className="flex-1 overflow-y-auto py-1">
         {filtrados.length === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
@@ -429,37 +415,36 @@ const ContactosPanel = ({
    ───────────────────────────────────────────── */
 const Mensajes = () => {
   const [contactos, setContactos] = useState<Contacto[]>([]);
-  const [noLeidos, setNoLeidos] = useState<Record<string, number>>({});
+  const [noLeidos, setNoLeidos] = useState<Record<number, number>>({});
   const [totalNoLeidos, setTotalNoLeidos] = useState(0);
   const [panelAbierto, setPanelAbierto] = useState(false);
   const [chatActivo, setChatActivo] = useState<Contacto | null>(null);
   const [chatMinimizado, setChatMinimizado] = useState(false);
 
   const refrescar = useCallback(async () => {
-    const [cs, nl, total] = await Promise.all([
-      getContactos(),
-      getNoLeidosPorContacto(),
-      getTotalNoLeidos(),
-    ]);
-    setContactos(cs);
-    setNoLeidos(nl);
-    setTotalNoLeidos(total);
+    try {
+      const [cs, nl, total] = await Promise.all([
+        getContactos(),
+        getNoLeidosPorContacto(),
+        getTotalNoLeidos(),
+      ]);
+      setContactos(cs);
+      setNoLeidos(nl);
+      setTotalNoLeidos(total);
+    } catch (err) {
+      console.error("Error al refrescar mensajes:", err);
+    }
   }, []);
 
   useEffect(() => {
     refrescar();
     const unsub = suscribirseACambios(() => refrescar());
-    return unsub;
+    const stopPolling = iniciarPolling(8000); // cada 8s
+    return () => {
+      unsub();
+      stopPolling();
+    };
   }, [refrescar]);
-
-  // Simulación de mensajes entrantes cada 25s (solo demo)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      await simularMensajeEntrante();
-      notificarCambio();
-    }, 25000);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleSelectContacto = (c: Contacto) => {
     setChatActivo(c);
