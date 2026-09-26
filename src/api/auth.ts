@@ -1,3 +1,4 @@
+// src/api/auth.ts
 import { User } from "../types/auth";
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -36,14 +37,18 @@ export const login = async (
   }
 
   const data = await response.json();
-  
+
   // Mapear el rol numérico a string
   const mapRole = (role: number): string => {
     switch (role) {
-      case 0: return "secretaria";
-      case 1: return "doctor";
-      case 2: return "administrador";
-      default: return "usuario";
+      case 0:
+        return "secretaria";
+      case 1:
+        return "doctor";
+      case 2:
+        return "administrador";
+      default:
+        return "usuario";
     }
   };
 
@@ -54,20 +59,22 @@ export const login = async (
       role: mapRole(data.user.role),
       email: data.user.email,
       phone: data.user.phone,
-      username: data.user.username
+      username: data.user.username,
     },
     token: data.token,
     expiresIn: data.expiresIn,
-    message: data.message
+    message: data.message,
   };
 };
 
-export const verifyToken = async (token: string): Promise<{ isValid: boolean; user?: User }> => {
+export const verifyToken = async (
+  token: string
+): Promise<{ isValid: boolean; user?: User }> => {
   try {
     const response = await fetch(`${API_URL}/auth/verify`, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
       },
     });
 
@@ -76,14 +83,18 @@ export const verifyToken = async (token: string): Promise<{ isValid: boolean; us
     }
 
     const data = await response.json();
-    
+
     if (data.success && data.user) {
       const mapRole = (role: number): string => {
         switch (role) {
-          case 0: return "secretaria";
-          case 1: return "doctor";
-          case 2: return "administrador";
-          default: return "usuario";
+          case 0:
+            return "secretaria";
+          case 1:
+            return "doctor";
+          case 2:
+            return "administrador";
+          default:
+            return "usuario";
         }
       };
 
@@ -95,8 +106,8 @@ export const verifyToken = async (token: string): Promise<{ isValid: boolean; us
           role: mapRole(data.user.role),
           email: data.user.email,
           phone: data.user.phone,
-          username: data.user.username
-        }
+          username: data.user.username,
+        },
       };
     }
 
@@ -107,7 +118,33 @@ export const verifyToken = async (token: string): Promise<{ isValid: boolean; us
   }
 };
 
+/**
+ * Cierra sesión:
+ * 1. Notifica al backend para marcar `en_linea = false`.
+ * 2. Limpia el estado local (localStorage).
+ *
+ * Usamos `keepalive: true` para garantizar que la petición se envíe
+ * incluso si el usuario cierra la pestaña o navega inmediatamente.
+ */
 export const logout = async (): Promise<void> => {
+  const token = localStorage.getItem("token");
+
+  if (token) {
+    try {
+      await fetch(`${API_URL}/auth/logout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        keepalive: true,
+      });
+    } catch (error) {
+      // No bloqueamos el logout local si falla la red
+      console.warn("No se pudo notificar al backend sobre el logout:", error);
+    }
+  }
+
   // Limpiar localStorage en el frontend
   localStorage.removeItem("currentUser");
   localStorage.removeItem("token");

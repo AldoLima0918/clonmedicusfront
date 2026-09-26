@@ -1,7 +1,15 @@
+// src/contexts/AuthContext.tsx
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { User } from "../types/auth";
 import { useToast } from "@/components/ui/use-toast";
-import { login as apiLogin, verifyToken, getStoredUser, getStoredToken, saveAuthData, logout as apiLogout } from "../api/auth";
+import {
+  login as apiLogin,
+  verifyToken,
+  getStoredUser,
+  getStoredToken,
+  saveAuthData,
+  logout as apiLogout,
+} from "../api/auth";
 
 interface AuthContextType {
   user: User | null;
@@ -50,10 +58,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsLoading(true);
     try {
       const { user: loggedInUser, token } = await apiLogin(username, password);
-      
+
       setUser(loggedInUser);
       saveAuthData(loggedInUser, token);
-      
+
       toast({
         title: "Inicio de sesión exitoso",
         description: `Bienvenido, ${loggedInUser.name}`,
@@ -71,9 +79,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  /**
+   * Cierra sesión:
+   * - Limpia el estado local inmediatamente (UX rápida).
+   * - Dispara el logout al backend en segundo plano (marca en_linea=false).
+   */
   const logout = () => {
+    // 1. Limpiar estado local primero para que la UI responda al instante
     setUser(null);
-    apiLogout();
+
+    // 2. Notificar al backend (async, no bloquea la navegación)
+    apiLogout().catch((err) =>
+      console.warn("Error al notificar logout al backend:", err)
+    );
+
     toast({
       title: "Sesión cerrada",
       description: "Has cerrado sesión exitosamente",
@@ -82,12 +101,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   return (
     <AuthContext.Provider
-      value={{ 
-        user, 
-        login, 
-        logout, 
-        isAuthenticated: !!user, 
-        isLoading 
+      value={{
+        user,
+        login,
+        logout,
+        isAuthenticated: !!user,
+        isLoading,
       }}
     >
       {children}

@@ -252,9 +252,9 @@ const AppSidebar = () => {
     other: "Otros",
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     closeMobileSidebar();
-    logout();
+    await logout();
     navigate("/login");
   };
 
