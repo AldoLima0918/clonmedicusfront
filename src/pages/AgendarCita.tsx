@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -15,17 +15,11 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -49,6 +43,7 @@ import {
 import NuevoPacienteForm from "@/components/NuevoPacienteForm";
 import {
   getPacientes,
+  getPacienteById,
   getServicios,
   getDoctoresByServicio,
   agendarCita,
@@ -99,6 +94,7 @@ const AgendarCita = () => {
   const [showPacienteResults, setShowPacienteResults] = useState(false);
   const [pacientesCargados, setPacientesCargados] = useState(false);
   const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     document.title = "Agendar Cita | Medicus";
@@ -192,48 +188,71 @@ const AgendarCita = () => {
     }
   }, [doctorId, date]);
 
+  // ✅ Carga el paciente desde ?paciente=ID pidiéndolo directo al backend por ID.
+  // No depende de que getPacientes("") lo traiga en la lista.
   useEffect(() => {
-    const idPaciente = (location.state as any)?.idpaciente;
-    if (!idPaciente || !pacientesCargados) return;
+    const idPaciente =
+      searchParams.get("paciente") ||
+      (location.state as any)?.idpaciente;
 
-    const encontrado = pacientesRegistrados.find(
-      (p) => Number(p.idpaciente) === Number(idPaciente)
-    );
+    if (!idPaciente) return;
 
-    if (encontrado) {
+    const idBuscado = Number(idPaciente);
+    let cancelado = false;
+
+    const aplicarPaciente = (p: any) => {
       setPaciente({
-        nombre: encontrado.nombre_completo,
-        telefono: encontrado.telefono,
-        ci: encontrado.ci || "",
-        notas: encontrado.notas || "",
+        nombre: p.nombre_completo,
+        telefono: p.telefono,
+        ci: p.ci || "",
+        notas: p.notas || "",
       });
-      setPacienteSeleccionado(Number(encontrado.idpaciente));
+      setPacienteSeleccionado(Number(p.idpaciente));
       setBusquedaPaciente("");
       setShowPacienteResults(false);
-    } else {
-      (async () => {
-        try {
-          const lista = await getPacientes("");
-          const match = lista.find(
-            (p: any) => Number(p.idpaciente) === Number(idPaciente)
-          );
-          if (match) {
-            setPacientesRegistrados(lista);
-            setPaciente({
-              nombre: match.nombre_completo,
-              telefono: match.telefono,
-              ci: match.ci || "",
-              notas: match.notas || "",
-            });
-            setPacienteSeleccionado(Number(match.idpaciente));
-          }
-        } catch (e) {
-          // silencioso
-        }
-      })();
+    };
+
+    // 1) Primero intentar en la lista ya cargada (es instantáneo)
+    const enLista = pacientesRegistrados.find(
+      (p) => Number(p.idpaciente) === idBuscado
+    );
+    if (enLista) {
+      aplicarPaciente(enLista);
+      return;
     }
+
+    // 2) Si no está en la lista, pedirlo DIRECTO al backend por ID
+    (async () => {
+      try {
+        const p = await getPacienteById(idBuscado);
+        if (cancelado || !p) return;
+
+        aplicarPaciente(p);
+
+        // Lo agregamos a la lista para que si el usuario busca, aparezca
+        setPacientesRegistrados((prev) => {
+          const existe = prev.some(
+            (x) => Number(x.idpaciente) === Number(p.idpaciente)
+          );
+          return existe ? prev : [p, ...prev];
+        });
+      } catch (error: any) {
+        if (cancelado) return;
+        console.error("[AgendarCita] Error cargando paciente por ID:", error);
+        toast({
+          title: "Paciente no encontrado",
+          description:
+            "No se pudo cargar automáticamente el paciente. Búscalo manualmente.",
+          variant: "destructive",
+        });
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state, pacientesCargados, pacientesRegistrados]);
+  }, [searchParams, location.state]);
 
   const filtrarPacientes = () => {
     if (!busquedaPaciente) return pacientesRegistrados;
@@ -243,7 +262,7 @@ const AgendarCita = () => {
         p.nombre_completo
           .toLowerCase()
           .includes(busquedaPaciente.toLowerCase()) ||
-        p.ci.toLowerCase().includes(busquedaPaciente.toLowerCase())
+        (p.ci || "").toLowerCase().includes(busquedaPaciente.toLowerCase())
     );
   };
 
@@ -492,7 +511,6 @@ const AgendarCita = () => {
   return (
     <div className="page-transition w-full p-4 sm:p-6 md:p-8">
       <div className="w-full">
-        {/* Header */}
         <div className="mb-3 sm:mb-6 md:mb-8">
           <h1 className="text-xl sm:text-3xl font-bold tracking-tight">
             Agendar Cita
@@ -502,7 +520,6 @@ const AgendarCita = () => {
           </p>
         </div>
 
-        {/* Diálogo de WhatsApp */}
         <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
@@ -578,7 +595,6 @@ const AgendarCita = () => {
         </Dialog>
 
         <div className="grid grid-cols-1 gap-3 sm:gap-6">
-          {/* Sección de Paciente */}
           <Card className="form-transition shadow-md border-none">
             <CardHeader className="pb-2 sm:pb-4">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-3">
@@ -874,9 +890,7 @@ const AgendarCita = () => {
             </CardContent>
           </Card>
 
-          {/* Sección de Fecha y Horario */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-6">
-            {/* ====== CARD DE FECHA CON CALENDARIO MEJORADO ====== */}
             <Card className="form-transition shadow-lg border border-border/60 bg-gradient-to-br from-card to-muted/20 overflow-hidden">
               <CardHeader className="pb-2 sm:pb-3 bg-gradient-to-r from-primary/5 to-transparent">
                 <CardTitle className="text-base sm:text-xl flex items-center">
@@ -923,23 +937,18 @@ const AgendarCita = () => {
                         "text-foreground hover:bg-primary/10 hover:text-primary hover:scale-105 " +
                         "focus:outline-none focus:ring-2 focus:ring-primary/40",
 
-                      // Día seleccionado
                       day_selected:
                         "bg-primary !text-foreground font-semibold shadow-md shadow-primary/30 " +
                         "hover:bg-primary hover:!text-foreground hover:scale-105",
 
-                      // Día de hoy
                       day_today:
                         "bg-primary/10 !text-primary font-semibold rounded-xl ring-1 ring-primary/30 " +
                         "aria-selected:!bg-primary aria-selected:!text-foreground " +
                         "aria-selected:!ring-0 aria-selected:shadow-md aria-selected:shadow-primary/30",
 
-                      // Días de otros meses
                       day_outside:
                         "text-muted-foreground/70 opacity-100",
 
-                      // Días anteriores: SIGUEN DESHABILITADOS,
-                      // pero ahora se pueden leer claramente.
                       day_disabled:
                         "text-foreground/60 opacity-100 cursor-not-allowed " +
                         "hover:bg-transparent hover:text-foreground/60 hover:scale-100",
@@ -955,7 +964,6 @@ const AgendarCita = () => {
               </CardContent>
             </Card>
 
-            {/* ====== CARD DE HORARIO ====== */}
             <Card className="form-transition shadow-md border-none">
               <CardHeader className="pb-2 sm:pb-3">
                 <CardTitle className="text-base sm:text-xl flex items-center">
@@ -998,7 +1006,6 @@ const AgendarCita = () => {
             </Card>
           </div>
 
-          {/* Botón de Agendar Cita */}
           <Card className="form-transition shadow-md border-none">
             <CardContent className="pt-4 pb-2">
               <form onSubmit={handleSubmit}>

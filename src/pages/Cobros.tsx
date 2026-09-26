@@ -65,7 +65,6 @@ const TransaccionCard = ({
   return (
     <Card className="shadow-sm border border-border/60">
       <CardContent className="p-4 space-y-3">
-        {/* Encabezado: paciente + estado */}
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold text-base leading-tight break-words">
@@ -88,7 +87,6 @@ const TransaccionCard = ({
           </Badge>
         </div>
 
-        {/* Detalles */}
         <div className="grid grid-cols-1 gap-2 text-sm pt-2 border-t">
           <div className="flex justify-between gap-2">
             <span className="text-muted-foreground shrink-0">Concepto</span>
@@ -128,7 +126,6 @@ const TransaccionCard = ({
           </div>
         </div>
 
-        {/* Acciones */}
         <div className="flex flex-col xs:flex-row gap-2 pt-2 border-t">
           {!esPagado && (
             <Button
@@ -203,7 +200,9 @@ const Cobros = () => {
       resultado = resultado.filter(
         (t) =>
           t.paciente.toLowerCase().includes(termino) ||
-          t.concepto.toLowerCase().includes(termino) ||
+          (Array.isArray(t.concepto)
+            ? t.concepto.join(" ").toLowerCase().includes(termino)
+            : t.concepto.toLowerCase().includes(termino)) ||
           t.monto.toString().includes(busqueda)
       );
     }
@@ -233,10 +232,9 @@ const Cobros = () => {
     setIsProcessing(false);
   };
 
+  // ✅ Navega con query string: /agendar-cita?paciente=123
   const handleAgendarCita = (transaccion: any) => {
-    navigate("/agendar-cita", {
-      state: { idpaciente: transaccion.idpaciente },
-    });
+    navigate(`/agendar-cita?paciente=${transaccion.idpaciente}`);
   };
 
   const handleGuardarEdicion = async () => {

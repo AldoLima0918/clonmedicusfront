@@ -9,6 +9,14 @@ export const getPacientes = async (searchTerm = "") => {
   return response.data;
 };
 
+// ✅ NUEVO: obtener un paciente por ID
+export const getPacienteById = async (idpaciente: number | string) => {
+  const response = await axios.get(
+    `${API_URL}/pacienteagendarcita/${idpaciente}`
+  );
+  return response.data;
+};
+
 export const getServicios = async () => {
   const response = await axios.get(`${API_URL}/serviciosagendarcita`);
   return response.data;
@@ -49,7 +57,6 @@ export const verificarCitaExistente = async (
 
 export const agendarCita = async (citaData: any) => {
   try {
-    // Primero verificar si ya existe una cita
     const citaExistente = await verificarCitaExistente(
       citaData.idpaciente,
       citaData.iddoctor,
