@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CalendarClock,
   CreditCard,
@@ -7,6 +7,8 @@ import {
   Trash2,
   FileText,
   X,
+  GripVertical,
+  Hash,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,6 +59,7 @@ import { useNavigate } from "react-router-dom";
 import {
   fetchCitas,
   updateEstadoCita,
+  reordenarCitas,
   deleteCita,
   procesarPago,
   fetchCitasCompletadas,
@@ -66,7 +69,6 @@ import {
 } from "@/api/listacitasapi";
 import {
   AlertDialog,
-  AlertDialogTrigger,
   AlertDialogContent,
   AlertDialogHeader,
   AlertDialogTitle,
@@ -100,6 +102,25 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
 import { exportarPDF } from "./pdfcitas";
 
 interface Cita {
@@ -112,6 +133,7 @@ interface Cita {
   hora: string;
   precio: number;
   estado: EstadoCita;
+  numeroLlegada?: number | null;
   fechaSimple?: string;
   fechaOriginal?: string;
   fechaObjeto?: Date;
@@ -183,113 +205,288 @@ interface Servicio {
   precio: number;
 }
 
-/** Card de una cita para vista móvil */
-const CitaCard = ({
+/* ─────────────────────────────────────────────
+   Fila sortable (desktop)
+   ───────────────────────────────────────────── */
+const SortableFila = ({
   cita,
+  posicion,
   onWhatsApp,
   onCambiarEstado,
   onCancelar,
 }: {
   cita: Cita;
+  posicion: number;
   onWhatsApp: (cita: Cita) => void;
   onCambiarEstado: (id: number, estado: EstadoCita) => void;
   onCancelar: (cita: Cita) => void;
-}) => (
-  <Card className="shadow-sm border border-border/60">
-    <CardContent className="p-4 space-y-3">
-      {/* Encabezado: paciente + estado + acciones */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <h3 className="font-semibold text-base leading-tight break-words">
-            {cita.paciente}
-          </h3>
-          <p className="text-xs text-muted-foreground mt-0.5 break-words">
-            {cita.servicio}
-          </p>
-        </div>
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: cita.idcita });
 
-        <div className="flex items-center gap-1 shrink-0">
-          <Badge variant="outline" className={estadoVariantes[cita.estado]}>
-            {estadoLabel[cita.estado]}
-          </Badge>
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : ("auto" as const),
+  };
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-[#25D366] hover:text-[#128C7E] hover:bg-[#25D366]/10"
-            onClick={() => onWhatsApp(cita)}
-            aria-label="WhatsApp"
+  return (
+    <TableRow
+      ref={setNodeRef}
+      style={style}
+      className={`group ${isDragging ? "bg-accent/40 shadow-lg" : ""}`}
+    >
+      <TableCell className="w-[70px]">
+        <div className="flex items-center gap-1">
+          <button
+            {...attributes}
+            {...listeners}
+            className="cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing"
+            aria-label="Arrastrar para reordenar"
           >
-            <WhatsAppIcon className="h-4 w-4" />
-          </Button>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <GripVertical className="h-4 w-4" />
+          </button>
+          <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-primary/10 px-1.5 text-xs font-bold text-primary">
+            {posicion}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell className="font-medium">{cita.paciente}</TableCell>
+      <TableCell>{cita.doctor}</TableCell>
+      <TableCell>{cita.fechaSimple}</TableCell>
+      <TableCell>{cita.hora}</TableCell>
+      <TableCell>{cita.telefono}</TableCell>
+      <TableCell>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-[#25D366] hover:text-[#128C7E] hover:bg-[#25D366]/10"
+          onClick={() => onWhatsApp(cita)}
+          aria-label="Enviar recordatorio por WhatsApp"
+        >
+          <WhatsAppIcon className="h-5 w-5" />
+        </Button>
+      </TableCell>
+      <TableCell>{cita.servicio}</TableCell>
+      <TableCell>Bs.{cita.precio}</TableCell>
+      <TableCell>
+        <Badge variant="outline" className={estadoVariantes[cita.estado]}>
+          {estadoLabel[cita.estado]}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-right">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {cita.estado !== "pendiente" && (
               <DropdownMenuItem
                 className="cursor-pointer"
                 onClick={() => onCambiarEstado(cita.idcita, "pendiente")}
               >
                 Marcar como pendiente
               </DropdownMenuItem>
+            )}
+            {cita.estado !== "En sala" && (
               <DropdownMenuItem
                 className="cursor-pointer"
                 onClick={() => onCambiarEstado(cita.idcita, "En sala")}
               >
                 Marcar como en sala
               </DropdownMenuItem>
+            )}
+            {cita.estado !== "en consulta" && (
               <DropdownMenuItem
                 className="cursor-pointer"
                 onClick={() => onCambiarEstado(cita.idcita, "en consulta")}
               >
                 Marcar como en consulta
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="cursor-pointer text-red-600"
-                onClick={() => onCancelar(cita)}
-              >
-                <Trash2 className="mr-2 h-4 w-4" /> Cancelar Cita
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="cursor-pointer text-red-600"
+              onClick={() => onCancelar(cita)}
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Cancelar Cita
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </TableCell>
+    </TableRow>
+  );
+};
 
-      {/* Detalles */}
-      <div className="grid grid-cols-1 gap-2 text-sm pt-2 border-t">
-        <div className="flex justify-between gap-2">
-          <span className="text-muted-foreground">Doctor</span>
-          <span className="font-medium text-right break-words">
-            {cita.doctor}
-          </span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span className="text-muted-foreground">Fecha</span>
-          <span className="font-medium text-right">{cita.fechaSimple}</span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span className="text-muted-foreground">Hora</span>
-          <span className="font-medium text-right">{cita.hora}</span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span className="text-muted-foreground">Teléfono</span>
-          <span className="font-medium text-right break-all">
-            {cita.telefono}
-          </span>
-        </div>
-        <div className="flex justify-between gap-2">
-          <span className="text-muted-foreground">Precio</span>
-          <span className="font-semibold text-right">Bs.{cita.precio}</span>
-        </div>
-      </div>
-    </CardContent>
-  </Card>
-);
+/* ─────────────────────────────────────────────
+   Card sortable (móvil)
+   ───────────────────────────────────────────── */
+const SortableCard = ({
+  cita,
+  posicion,
+  onWhatsApp,
+  onCambiarEstado,
+  onCancelar,
+}: {
+  cita: Cita;
+  posicion: number;
+  onWhatsApp: (cita: Cita) => void;
+  onCambiarEstado: (id: number, estado: EstadoCita) => void;
+  onCancelar: (cita: Cita) => void;
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: cita.idcita });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <Card
+        className={`shadow-sm border border-border/60 ${
+          isDragging ? "ring-2 ring-primary shadow-lg" : ""
+        }`}
+      >
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <button
+                {...attributes}
+                {...listeners}
+                className="cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing shrink-0"
+                aria-label="Arrastrar para reordenar"
+              >
+                <GripVertical className="h-4 w-4" />
+              </button>
+              <span className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 px-1.5 text-xs font-bold text-primary">
+                {posicion}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-base leading-tight break-words">
+                  {cita.paciente}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                  {cita.servicio}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <Badge
+                variant="outline"
+                className={estadoVariantes[cita.estado]}
+              >
+                {estadoLabel[cita.estado]}
+              </Badge>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-[#25D366] hover:text-[#128C7E] hover:bg-[#25D366]/10"
+                onClick={() => onWhatsApp(cita)}
+                aria-label="WhatsApp"
+              >
+                <WhatsAppIcon className="h-4 w-4" />
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {cita.estado !== "pendiente" && (
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      onClick={() => onCambiarEstado(cita.idcita, "pendiente")}
+                    >
+                      Marcar como pendiente
+                    </DropdownMenuItem>
+                  )}
+                  {cita.estado !== "En sala" && (
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      onClick={() => onCambiarEstado(cita.idcita, "En sala")}
+                    >
+                      Marcar como en sala
+                    </DropdownMenuItem>
+                  )}
+                  {cita.estado !== "en consulta" && (
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      onClick={() =>
+                        onCambiarEstado(cita.idcita, "en consulta")
+                      }
+                    >
+                      Marcar como en consulta
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="cursor-pointer text-red-600"
+                    onClick={() => onCancelar(cita)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> Cancelar Cita
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 text-sm pt-2 border-t">
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Doctor</span>
+              <span className="font-medium text-right break-words">
+                {cita.doctor}
+              </span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Fecha</span>
+              <span className="font-medium text-right">
+                {cita.fechaSimple}
+              </span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Hora</span>
+              <span className="font-medium text-right">{cita.hora}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Teléfono</span>
+              <span className="font-medium text-right break-all">
+                {cita.telefono}
+              </span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">Precio</span>
+              <span className="font-semibold text-right">
+                Bs.{cita.precio}
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 const ListaCitas = () => {
   const [todasLasCitas, setTodasLasCitas] = useState<Cita[]>([]);
@@ -303,7 +500,7 @@ const ListaCitas = () => {
   const [motivoCancelacion, setMotivoCancelacion] = useState("");
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [ordenarPor, setOrdenarPor] = useState<string | null>(null);
+  const [ordenarPor, setOrdenarPor] = useState<string | null>("numeroLlegada");
   const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
   const [fechaInicio, setFechaInicio] = useState<Date>(startOfDay(new Date()));
   const [fechaFin, setFechaFin] = useState<Date>(endOfDay(new Date()));
@@ -324,6 +521,26 @@ const ListaCitas = () => {
   const [exportTipoReporte, setExportTipoReporte] = useState<string>("todos");
   const [exportEstadoCitas, setExportEstadoCitas] = useState<string[]>([]);
   const [generandoPDF, setGenerandoPDF] = useState(false);
+
+  // ── DnD sensors ──
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 150, tolerance: 5 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  /**
+   * Solo permitimos drag & drop cuando NO hay búsqueda activa
+   * y el orden es por número de llegada ascendente.
+   */
+  const dragHabilitado =
+    !busqueda && ordenarPor === "numeroLlegada" && ordenDireccion === "asc";
 
   const formatFechaSimple = (fechaISO: string) => {
     return fechaISO.split("T")[0];
@@ -360,6 +577,7 @@ const ListaCitas = () => {
           fechaSimple: formatFechaSimple(cita.fecha),
           fechaOriginal: cita.fecha,
           fechaObjeto: parseISO(cita.fecha.split("T")[0]),
+          numeroLlegada: cita.numero_llegada ?? null,
         }));
 
         const citasFuturas = citasMapeadas.filter(
@@ -422,6 +640,11 @@ const ListaCitas = () => {
 
       if (ordenarPor) {
         citasFiltradas.sort((a, b) => {
+          if (ordenarPor === "numeroLlegada") {
+            const aNum = a.numeroLlegada ?? Number.MAX_SAFE_INTEGER;
+            const bNum = b.numeroLlegada ?? Number.MAX_SAFE_INTEGER;
+            return ordenDireccion === "asc" ? aNum - bNum : bNum - aNum;
+          }
           if (ordenarPor === "fecha") {
             return ordenDireccion === "asc"
               ? (a.fechaObjeto?.getTime() || 0) -
@@ -459,6 +682,90 @@ const ListaCitas = () => {
     ordenarPor,
     ordenDireccion,
   ]);
+
+  /* ─────────────────────────────────────────────
+     Drag & drop: reordenar conservando los números existentes.
+     
+     Ejemplo:
+       Antes: [1, 4, 5, 8, 14]
+       Mueves el 8 a la posición 2 (después del 1):
+       Resultado: [1, 8, 4, 5, 14]
+     
+     Es decir: solo se reordenan los números que estaban entre
+     el origen y el destino. Los de fuera del rango no cambian.
+     ───────────────────────────────────────────── */
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = citasFiltradas.findIndex(
+      (c) => c.idcita === active.id
+    );
+    const newIndex = citasFiltradas.findIndex((c) => c.idcita === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    // 1) Mover el elemento en la lista (para reflejar el nuevo orden)
+    const reordenadas = arrayMove(citasFiltradas, oldIndex, newIndex);
+
+    // 2) Rango afectado: desde min hasta max (inclusive)
+    const start = Math.min(oldIndex, newIndex);
+    const end = Math.max(oldIndex, newIndex);
+
+    // 3) Recolectar los numeroLlegada de las posiciones afectadas
+    //    y ordenarlos ascendentemente.
+    const numerosAfectados = reordenadas
+      .slice(start, end + 1)
+      .map((c) => c.numeroLlegada)
+      .filter((n): n is number => n !== null && n !== undefined)
+      .sort((a, b) => a - b);
+
+    // 4) Reasignarlos en orden a las filas del rango afectado.
+    //    Ej: antes [1,4,5,8,14] -> mueves el 8 a pos 2
+    //        rango afectado: índices 1..3
+    //        números en ese rango tras el arrayMove: [4,5,8]
+    //        ordenados: [4,5,8]  (no cambia el conjunto, solo su posición)
+    //        resultado: [1,8,4,5,14]  ← el 8 toma el lugar del 4,
+    //                                    y 4,5 se corren una posición.
+    let idx = 0;
+    const conNumerosReasignados = reordenadas.map((cita, i) => {
+      if (i < start || i > end) return cita;
+      const nuevoNumero = numerosAfectados[idx++];
+      return { ...cita, numeroLlegada: nuevoNumero ?? cita.numeroLlegada };
+    });
+
+    // Actualización optimista en el estado global
+    setTodasLasCitas((prev) => {
+      const mapa = new Map(
+        conNumerosReasignados.map((c) => [c.idcita, c.numeroLlegada])
+      );
+      return prev.map((c) =>
+        mapa.has(c.idcita)
+          ? { ...c, numeroLlegada: mapa.get(c.idcita) ?? c.numeroLlegada }
+          : c
+      );
+    });
+    setCitasFiltradas(conNumerosReasignados);
+
+    // Persistir en backend (solo los que cambiaron)
+    const cambios = conNumerosReasignados
+      .slice(start, end + 1)
+      .filter((c) => c.numeroLlegada !== null && c.numeroLlegada !== undefined)
+      .map((c) => ({
+        idcita: c.idcita,
+        numeroLlegada: c.numeroLlegada as number,
+      }));
+
+    try {
+      await reordenarCitas(cambios);
+    } catch {
+      toast({
+        title: "Error",
+        description: "No se pudo guardar el nuevo orden",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleEliminarCita = async (id: number) => {
     try {
@@ -613,6 +920,12 @@ const ListaCitas = () => {
       setGenerandoPDF(false);
     }
   };
+
+  /** IDs para el SortableContext */
+  const ids = useMemo(
+    () => citasFiltradas.map((c) => c.idcita),
+    [citasFiltradas]
+  );
 
   return (
     <div className="page-transition w-full p-4 sm:p-6 md:p-8">
@@ -877,7 +1190,7 @@ const ListaCitas = () => {
         <CardHeader className="bg-medical-light bg-opacity-30 p-4 sm:p-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex items-center">
-              <CalendarClock className="h-5 w-5 mr-2 text-medical-dark shrink-0" />
+              <Hash className="h-5 w-5 mr-2 text-medical-dark shrink-0" />
               <div>
                 <CardTitle className="text-lg sm:text-xl">
                   Citas Programadas
@@ -979,268 +1292,235 @@ const ListaCitas = () => {
         </CardHeader>
 
         <CardContent className="p-0">
-          {/* ====== VISTA MÓVIL (cards) ====== */}
-          <div className="md:hidden p-3 sm:p-4 space-y-3">
-            {citasFiltradas.length > 0 ? (
-              citasFiltradas.map((cita) => (
-                <CitaCard
-                  key={cita.idcita}
-                  cita={cita}
-                  onWhatsApp={(c) =>
-                    handleWhatsAppClick(
-                      c.telefono,
-                      c.paciente,
-                      c.fechaOriginal || c.fecha,
-                      c.hora
-                    )
-                  }
-                  onCambiarEstado={handleCambiarEstado}
-                  onCancelar={openDeleteDialog}
-                />
-              ))
-            ) : (
-              <div className="h-24 flex items-center justify-center text-sm text-muted-foreground text-center px-4">
-                No se encontraron citas con los filtros aplicados.
-              </div>
-            )}
-          </div>
-
-          {/* ====== VISTA DESKTOP (tabla) ====== */}
-          <div className="hidden md:block overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (ordenarPor === "paciente") {
-                          setOrdenDireccion(
-                            ordenDireccion === "asc" ? "desc" : "asc"
-                          );
-                        } else {
-                          setOrdenarPor("paciente");
-                          setOrdenDireccion("asc");
-                        }
-                      }}
-                    >
-                      Paciente
-                      {ordenarPor === "paciente" && (
-                        <span className="ml-2">
-                          {ordenDireccion === "asc" ? "↑" : "↓"}
-                        </span>
-                      )}
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (ordenarPor === "doctor") {
-                          setOrdenDireccion(
-                            ordenDireccion === "asc" ? "desc" : "asc"
-                          );
-                        } else {
-                          setOrdenarPor("doctor");
-                          setOrdenDireccion("asc");
-                        }
-                      }}
-                    >
-                      Doctor
-                      {ordenarPor === "doctor" && (
-                        <span className="ml-2">
-                          {ordenDireccion === "asc" ? "↑" : "↓"}
-                        </span>
-                      )}
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (ordenarPor === "fecha") {
-                          setOrdenDireccion(
-                            ordenDireccion === "asc" ? "desc" : "asc"
-                          );
-                        } else {
-                          setOrdenarPor("fecha");
-                          setOrdenDireccion("asc");
-                        }
-                      }}
-                    >
-                      Fecha
-                      {ordenarPor === "fecha" && (
-                        <span className="ml-2">
-                          {ordenDireccion === "asc" ? "↑" : "↓"}
-                        </span>
-                      )}
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (ordenarPor === "hora") {
-                          setOrdenDireccion(
-                            ordenDireccion === "asc" ? "desc" : "asc"
-                          );
-                        } else {
-                          setOrdenarPor("hora");
-                          setOrdenDireccion("asc");
-                        }
-                      }}
-                    >
-                      Hora
-                      {ordenarPor === "hora" && (
-                        <span className="ml-2">
-                          {ordenDireccion === "asc" ? "↑" : "↓"}
-                        </span>
-                      )}
-                    </Button>
-                  </TableHead>
-                  <TableHead>Teléfono</TableHead>
-                  <TableHead>WhatsApp</TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (ordenarPor === "servicio") {
-                          setOrdenDireccion(
-                            ordenDireccion === "asc" ? "desc" : "asc"
-                          );
-                        } else {
-                          setOrdenarPor("servicio");
-                          setOrdenDireccion("asc");
-                        }
-                      }}
-                    >
-                      Servicio
-                      {ordenarPor === "servicio" && (
-                        <span className="ml-2">
-                          {ordenDireccion === "asc" ? "↑" : "↓"}
-                        </span>
-                      )}
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        if (ordenarPor === "precio") {
-                          setOrdenDireccion(
-                            ordenDireccion === "asc" ? "desc" : "asc"
-                          );
-                        } else {
-                          setOrdenarPor("precio");
-                          setOrdenDireccion("asc");
-                        }
-                      }}
-                    >
-                      Precio
-                      {ordenarPor === "precio" && (
-                        <span className="ml-2">
-                          {ordenDireccion === "asc" ? "↑" : "↓"}
-                        </span>
-                      )}
-                    </Button>
-                  </TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+              {/* ====== VISTA MÓVIL (cards) ====== */}
+              <div className="md:hidden p-3 sm:p-4 space-y-3">
                 {citasFiltradas.length > 0 ? (
-                  citasFiltradas.map((cita) => (
-                    <TableRow key={cita.idcita} className="group">
-                      <TableCell className="font-medium">
-                        {cita.paciente}
-                      </TableCell>
-                      <TableCell>{cita.doctor}</TableCell>
-                      <TableCell>{cita.fechaSimple}</TableCell>
-                      <TableCell>{cita.hora}</TableCell>
-                      <TableCell>{cita.telefono}</TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-[#25D366] hover:text-[#128C7E] hover:bg-[#25D366]/10"
-                          onClick={() =>
-                            handleWhatsAppClick(
-                              cita.telefono,
-                              cita.paciente,
-                              cita.fechaOriginal || cita.fecha,
-                              cita.hora
-                            )
-                          }
-                          aria-label="Enviar recordatorio por WhatsApp"
-                        >
-                          <WhatsAppIcon className="h-5 w-5" />
-                        </Button>
-                      </TableCell>
-                      <TableCell>{cita.servicio}</TableCell>
-                      <TableCell>Bs.{cita.precio}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={estadoVariantes[cita.estado]}
-                        >
-                          {estadoLabel[cita.estado]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              className="cursor-pointer"
-                              onClick={() =>
-                                handleCambiarEstado(cita.idcita, "pendiente")
-                              }
-                            >
-                              Marcar como pendiente
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="cursor-pointer"
-                              onClick={() =>
-                                handleCambiarEstado(cita.idcita, "En sala")
-                              }
-                            >
-                              Marcar como en sala
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="cursor-pointer"
-                              onClick={() =>
-                                handleCambiarEstado(cita.idcita, "en consulta")
-                              }
-                            >
-                              Marcar como en consulta
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="cursor-pointer text-red-600"
-                              onClick={() => openDeleteDialog(cita)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" /> Cancelar Cita
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                  citasFiltradas.map((cita, index) => (
+                    <SortableCard
+                      key={cita.idcita}
+                      cita={cita}
+                      posicion={cita.numeroLlegada ?? index + 1}
+                      onWhatsApp={(c) =>
+                        handleWhatsAppClick(
+                          c.telefono,
+                          c.paciente,
+                          c.fechaOriginal || c.fecha,
+                          c.hora
+                        )
+                      }
+                      onCambiarEstado={handleCambiarEstado}
+                      onCancelar={openDeleteDialog}
+                    />
                   ))
                 ) : (
-                  <TableRow>
-                    <TableCell colSpan={11} className="h-24 text-center">
-                      No se encontraron citas con los filtros aplicados.
-                    </TableCell>
-                  </TableRow>
+                  <div className="h-24 flex items-center justify-center text-sm text-muted-foreground text-center px-4">
+                    No se encontraron citas con los filtros aplicados.
+                  </div>
                 )}
-              </TableBody>
-            </Table>
-          </div>
+              </div>
+
+              {/* ====== VISTA DESKTOP (tabla) ====== */}
+              <div className="hidden md:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[80px]">
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "numeroLlegada") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("numeroLlegada");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Nº
+                          {ordenarPor === "numeroLlegada" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "paciente") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("paciente");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Paciente
+                          {ordenarPor === "paciente" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "doctor") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("doctor");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Doctor
+                          {ordenarPor === "doctor" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "fecha") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("fecha");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Fecha
+                          {ordenarPor === "fecha" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "hora") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("hora");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Hora
+                          {ordenarPor === "hora" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>Teléfono</TableHead>
+                      <TableHead>WhatsApp</TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "servicio") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("servicio");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Servicio
+                          {ordenarPor === "servicio" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            if (ordenarPor === "precio") {
+                              setOrdenDireccion(
+                                ordenDireccion === "asc" ? "desc" : "asc"
+                              );
+                            } else {
+                              setOrdenarPor("precio");
+                              setOrdenDireccion("asc");
+                            }
+                          }}
+                        >
+                          Precio
+                          {ordenarPor === "precio" && (
+                            <span className="ml-2">
+                              {ordenDireccion === "asc" ? "↑" : "↓"}
+                            </span>
+                          )}
+                        </Button>
+                      </TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {citasFiltradas.length > 0 ? (
+                      citasFiltradas.map((cita, index) => (
+                        <SortableFila
+                          key={cita.idcita}
+                          cita={cita}
+                          posicion={cita.numeroLlegada ?? index + 1}
+                          onWhatsApp={(c) =>
+                            handleWhatsAppClick(
+                              c.telefono,
+                              c.paciente,
+                              c.fechaOriginal || c.fecha,
+                              c.hora
+                            )
+                          }
+                          onCambiarEstado={handleCambiarEstado}
+                          onCancelar={openDeleteDialog}
+                        />
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={11} className="h-24 text-center">
+                          No se encontraron citas con los filtros aplicados.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </SortableContext>
+          </DndContext>
         </CardContent>
       </Card>
 

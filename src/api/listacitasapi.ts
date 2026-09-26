@@ -18,6 +18,7 @@ export interface CitaExportacion {
   hora: string;
   precio: number;
   estado: number;
+  numero_llegada?: number | null;
 }
 
 export const fetchCitas = async () => {
@@ -30,19 +31,21 @@ export const fetchCitas = async () => {
 
 export const fetchCitasCompletadas = async (params: ExportarCitasParams) => {
   const queryParams = new URLSearchParams();
-  queryParams.append('fechaInicio', params.fechaInicio);
-  queryParams.append('fechaFin', params.fechaFin);
-  queryParams.append('tipoReporte', params.tipoReporte);
-  
+  queryParams.append("fechaInicio", params.fechaInicio);
+  queryParams.append("fechaFin", params.fechaFin);
+  queryParams.append("tipoReporte", params.tipoReporte);
+
   if (params.servicios && params.servicios.length > 0) {
-    queryParams.append('servicios', params.servicios.join(','));
+    queryParams.append("servicios", params.servicios.join(","));
   }
-  
+
   if (params.estados && params.estados.length > 0) {
-    queryParams.append('estados', params.estados.join(','));
+    queryParams.append("estados", params.estados.join(","));
   }
-  
-  const response = await fetch(`${API_URL}/citas/historial?${queryParams.toString()}`);
+
+  const response = await fetch(
+    `${API_URL}/citas/historial?${queryParams.toString()}`
+  );
   if (!response.ok) {
     throw new Error("Error al obtener el historial de citas");
   }
@@ -71,13 +74,34 @@ export const updateEstadoCita = async (id: number, nuevoEstado: number) => {
   return response.json();
 };
 
+/**
+ * Reordena las citas del día.
+ * Envía: { orden: [{ idcita, numeroLlegada }, ...] }
+ */
+export const reordenarCitas = async (
+  orden: { idcita: number; numeroLlegada: number }[]
+) => {
+  const response = await fetch(`${API_URL}/citas/reordenar`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ orden }),
+  });
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || "Error al reordenar las citas");
+  }
+  return response.json();
+};
+
 export const deleteCita = async (id: number, motivo?: string) => {
   const response = await fetch(`${API_URL}/citas/${id}`, {
     method: "DELETE",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ motivo }), // Solo para visual, no se guarda en BD
+    body: JSON.stringify({ motivo }),
   });
   if (!response.ok) {
     throw new Error("Error al eliminar la cita");

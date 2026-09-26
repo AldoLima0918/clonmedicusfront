@@ -64,8 +64,12 @@ export const agendarCita = async (citaData: any) => {
     );
 
     if (citaExistente) {
-      throw new Error("El paciente ya tiene una cita agendada con este doctor para hoy");
+      throw new Error(
+        "El paciente ya tiene una cita agendada con este doctor para hoy"
+      );
     }
+
+    console.log("📤 Enviando cita al backend:", citaData);
 
     const responseCita = await axios.post(
       `${API_URL}/citasagendarcita`,
@@ -80,8 +84,22 @@ export const agendarCita = async (citaData: any) => {
 
     return responseCita.data;
   } catch (error: any) {
+    // Loguear todo lo útil para diagnosticar el 400
+    if (error.response) {
+      console.error("❌ Error del backend:", {
+        status: error.response.status,
+        data: error.response.data,
+      });
+    } else {
+      console.error("❌ Error sin respuesta del backend:", error.message);
+    }
+
+    // Priorizar mensaje del backend
     if (error.response?.data?.message) {
       throw new Error(error.response.data.message);
+    }
+    if (error.response?.data?.error) {
+      throw new Error(error.response.data.error);
     }
     throw new Error(error.message || "Error al agendar la cita");
   }
