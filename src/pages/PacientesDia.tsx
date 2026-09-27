@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getPacientesDelDia } from "@/api/pacientesdiaapi";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useToast } from "@/components/ui/use-toast";
 
 type EstadoCita =
   | "pendiente"
@@ -21,22 +23,30 @@ type EstadoCita =
   | "En sala"
   | "Completada";
 
+// Helper local para concatenar clases
+const cx = (...classes: (string | false | null | undefined)[]) =>
+  classes.filter(Boolean).join(" ");
+
 const PacientesDia = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id;
+  const { toast } = useToast();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [patients, setPatients] = useState<any[]>([]);
   const [currentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    document.title = "Pacientes del Día";
-    fetchPacientesDelDia();
-  }, [userId]);
+  // ============================================
+  // WEBSOCKET
+  // ============================================
+  const { isConnected, on } = useWebSocket();
 
-  const fetchPacientesDelDia = async () => {
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchPacientesDelDia = useCallback(async () => {
     try {
       if (!userId) {
         console.error("Usuario no autenticado");
@@ -53,7 +63,88 @@ const PacientesDia = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
+
+  const recargarConDebounce = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      fetchPacientesDelDia();
+    }, 300);
+  }, [fetchPacientesDelDia]);
+
+  // Carga inicial
+  useEffect(() => {
+    document.title = "Pacientes del Día";
+    fetchPacientesDelDia();
+  }, [fetchPacientesDelDia]);
+
+  // ============================================
+  // WEBSOCKET - Suscripciones
+  // ============================================
+  useEffect(() => {
+    const unsubscribeNuevaCita = on("nueva-cita", (data) => {
+      console.log("📅 Nueva cita recibida via WebSocket:", data);
+      toast({
+        title: "🔄 Nueva cita registrada",
+        description: data?.paciente
+          ? `${data.paciente} - ${data.servicio || ""}`
+          : "Se ha registrado una nueva cita",
+        duration: 3000,
+      });
+      recargarConDebounce();
+    });
+
+    const unsubscribeEstado = on("cita-estado-actualizado", (data) => {
+      console.log("🔄 Estado de cita actualizado via WebSocket:", data);
+      recargarConDebounce();
+    });
+
+    const unsubscribeCancelada = on("cita-cancelada", (data) => {
+      console.log("🗑️ Cita cancelada via WebSocket:", data);
+      recargarConDebounce();
+    });
+
+    const unsubscribeReordenadas = on("citas-reordenadas", (data) => {
+      console.log("↕️ Citas reordenadas via WebSocket:", data);
+      recargarConDebounce();
+    });
+
+    const unsubscribePago = on("pago-procesado", (data) => {
+      console.log("💰 Pago procesado via WebSocket:", data);
+      recargarConDebounce();
+    });
+
+    const unsubscribeRefresh = on("refresh", (data) => {
+      if (data?.module === "citas") {
+        console.log("🔄 Refresh de citas recibido via WebSocket:", data);
+        recargarConDebounce();
+      }
+    });
+
+    return () => {
+      unsubscribeNuevaCita();
+      unsubscribeEstado();
+      unsubscribeCancelada();
+      unsubscribeReordenadas();
+      unsubscribePago();
+      unsubscribeRefresh();
+
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, [on, toast, recargarConDebounce]);
+
+  // Aviso si no hay conexión
+  useEffect(() => {
+    if (!isConnected) {
+      console.warn(
+        "⚠️ WebSocket no conectado - las actualizaciones en tiempo real no funcionarán"
+      );
+    }
+  }, [isConnected]);
 
   const filteredPatients = patients.filter(
     (patient) =>
@@ -159,22 +250,26 @@ const PacientesDia = () => {
     return (
       <Card className="shadow-sm border border-border/60">
         <CardContent className="p-4 space-y-3">
-          {/* Encabezado: nombre + estado */}
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <h3 className="font-semibold text-base leading-tight break-words flex items-center gap-2">
-                <User className="h-4 w-4 shrink-0 text-muted-foreground" />
-                {patient.nombre}
-              </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {edad} años
-              </p>
+            <div className="min-w-0 flex-1 flex items-start gap-3">
+              <span className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 px-1.5 text-xs font-bold text-primary">
+                {patient.numero_llegada ?? "—"}
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-base leading-tight break-words flex items-center gap-2">
+                  <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  {patient.nombre}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {edad} años
+                </p>
+              </div>
             </div>
 
             <div className="shrink-0">{getStatusBadge(patient.estado)}</div>
           </div>
 
-          {/* Detalles */}
           <div className="grid grid-cols-1 gap-2 text-sm pt-2 border-t">
             <div className="flex justify-between gap-2">
               <span className="text-muted-foreground shrink-0">Hora</span>
@@ -201,7 +296,6 @@ const PacientesDia = () => {
             </div>
           </div>
 
-          {/* Acción */}
           <Button
             size="sm"
             variant="outline"
@@ -243,6 +337,28 @@ const PacientesDia = () => {
 
   return (
     <div className="page-transition w-full p-4 sm:p-6 md:p-8">
+      {/* ============================================ */}
+      {/* INDICADOR DE WEBSOCKET */}
+      {/* ============================================ */}
+      <div className="flex items-center justify-end mb-2">
+        <div
+          className={cx(
+            "flex items-center gap-2 text-xs px-3 py-1 rounded-full",
+            isConnected
+              ? "bg-green-100 text-green-700"
+              : "bg-red-100 text-red-700"
+          )}
+        >
+          <span
+            className={cx(
+              "w-2 h-2 rounded-full",
+              isConnected ? "bg-green-500 animate-pulse" : "bg-red-500"
+            )}
+          />
+          {isConnected ? "Tiempo real activo" : "Sin conexión en tiempo real"}
+        </div>
+      </div>
+
       <header className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 md:mb-8 gap-3 md:gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1">
@@ -284,10 +400,7 @@ const PacientesDia = () => {
               {/* ====== VISTA MÓVIL (cards) ====== */}
               <div className="md:hidden p-3 sm:p-4 space-y-3">
                 {filteredPatients.map((patient) => (
-                  <PacienteDiaCard
-                    key={patient.idcita}
-                    patient={patient}
-                  />
+                  <PacienteDiaCard key={patient.idcita} patient={patient} />
                 ))}
               </div>
 
@@ -296,6 +409,7 @@ const PacientesDia = () => {
                 <table className="w-full table-auto">
                   <thead>
                     <tr className="border-b">
+                      <th className="text-left py-4 px-4 w-[80px]">Nº</th>
                       <th className="text-left py-4 px-4">Nombre</th>
                       <th className="text-left py-4 px-4">Edad</th>
                       <th className="text-left py-4 px-4">Estado</th>
@@ -322,6 +436,12 @@ const PacientesDia = () => {
                           );
                         }}
                       >
+                        <td className="py-5 px-4">
+                          <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-primary/10 px-1.5 text-xs font-bold text-primary">
+                            {patient.numero_llegada ?? "—"}
+                          </span>
+                        </td>
+
                         <td className="py-5 px-4">
                           <div className="flex items-center">
                             <User className="h-4 w-4 mr-2" />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   CalendarClock,
   CreditCard,
@@ -122,6 +122,11 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 import { exportarPDF } from "./pdfcitas";
+import { useWebSocket } from "@/hooks/useWebSocket";
+
+// Helper local para concatenar clases
+const cx = (...classes: (string | false | null | undefined)[]) =>
+  classes.filter(Boolean).join(" ");
 
 interface Cita {
   idcita: number;
@@ -522,6 +527,157 @@ const ListaCitas = () => {
   const [exportEstadoCitas, setExportEstadoCitas] = useState<string[]>([]);
   const [generandoPDF, setGenerandoPDF] = useState(false);
 
+  // ============================================
+  // WEBSOCKET
+  // ============================================
+  const { isConnected, on } = useWebSocket();
+
+  // ✅ CORREGIDO: usar ReturnType en lugar de NodeJS.Timeout
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Recarga las citas desde el backend.
+   */
+  const cargarCitas = useCallback(async () => {
+    try {
+      const [citasBackend, serviciosData] = await Promise.all([
+        fetchCitas(),
+        fetchServicios(),
+      ]);
+
+      const citasMapeadas: Cita[] = citasBackend.map((cita: any) => ({
+        ...cita,
+        estado: mapearEstado(cita.estado),
+        hora: cita.hora.slice(0, 5),
+        fechaSimple: formatFechaSimple(cita.fecha),
+        fechaOriginal: cita.fecha,
+        fechaObjeto: parseISO(cita.fecha.split("T")[0]),
+        numeroLlegada: cita.numero_llegada ?? null,
+      }));
+
+      const citasFuturas = citasMapeadas.filter(
+        (cita) =>
+          cita.fechaObjeto && cita.fechaObjeto >= startOfDay(new Date())
+      );
+
+      setTodasLasCitas(citasFuturas);
+
+      const doctoresUnicos = Array.from(
+        new Set(
+          citasFuturas
+            .map((cita) => cita.doctor)
+            .filter(
+              (doctor): doctor is string =>
+                doctor !== undefined && doctor !== null
+            )
+        )
+      );
+
+      setDoctores(doctoresUnicos);
+      setServicios(serviciosData);
+    } catch (error) {
+      console.error("Error cargando citas:", error);
+    }
+  }, []);
+
+  /**
+   * Debounce para evitar múltiples recargas si llegan varios eventos a la vez
+   */
+  const recargarConDebounce = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      cargarCitas();
+    }, 300);
+  }, [cargarCitas]);
+
+  // Carga inicial
+  useEffect(() => {
+    cargarCitas();
+  }, [cargarCitas]);
+
+  // ============================================
+  // WEBSOCKET - Suscripciones
+  // ============================================
+  useEffect(() => {
+    const unsubscribeNuevaCita = on("nueva-cita", (data) => {
+      console.log("📅 Nueva cita recibida via WebSocket:", data);
+      toast({
+        title: "🔄 Nueva cita registrada",
+        description: data?.paciente
+          ? `${data.paciente} - ${data.servicio || ""}`
+          : "Se ha registrado una nueva cita",
+        duration: 3000,
+      });
+      recargarConDebounce();
+    });
+
+    const unsubscribeEstado = on("cita-estado-actualizado", (data) => {
+      console.log("🔄 Estado de cita actualizado via WebSocket:", data);
+      recargarConDebounce();
+    });
+
+    const unsubscribeCancelada = on("cita-cancelada", (data) => {
+      console.log("🗑️ Cita cancelada via WebSocket:", data);
+      toast({
+        title: "🗑️ Cita cancelada",
+        description: data?.motivo
+          ? `Motivo: ${data.motivo}`
+          : "Una cita ha sido cancelada",
+        variant: "destructive",
+        duration: 3000,
+      });
+      recargarConDebounce();
+    });
+
+    const unsubscribeReordenadas = on("citas-reordenadas", (data) => {
+      console.log("↕️ Citas reordenadas via WebSocket:", data);
+      recargarConDebounce();
+    });
+
+    const unsubscribePago = on("pago-procesado", (data) => {
+      console.log("💰 Pago procesado via WebSocket:", data);
+      toast({
+        title: "💰 Pago procesado",
+        description: data?.metodoPago
+          ? `Método: ${data.metodoPago}`
+          : "Se ha procesado un pago",
+        duration: 3000,
+      });
+      recargarConDebounce();
+    });
+
+    const unsubscribeRefresh = on("refresh", (data) => {
+      if (data?.module === "citas" || data?.module === "caja") {
+        console.log("🔄 Refresh recibido via WebSocket:", data);
+        recargarConDebounce();
+      }
+    });
+
+    return () => {
+      unsubscribeNuevaCita();
+      unsubscribeEstado();
+      unsubscribeCancelada();
+      unsubscribeReordenadas();
+      unsubscribePago();
+      unsubscribeRefresh();
+
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, [on, toast, recargarConDebounce]);
+
+  // Aviso si no hay conexión
+  useEffect(() => {
+    if (!isConnected) {
+      console.warn(
+        "⚠️ WebSocket no conectado - las actualizaciones en tiempo real no funcionarán"
+      );
+    }
+  }, [isConnected]);
+
   // ── DnD sensors ──
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -535,10 +691,6 @@ const ListaCitas = () => {
     })
   );
 
-  /**
-   * Solo permitimos drag & drop cuando NO hay búsqueda activa
-   * y el orden es por número de llegada ascendente.
-   */
   const dragHabilitado =
     !busqueda && ordenarPor === "numeroLlegada" && ordenDireccion === "asc";
 
@@ -563,67 +715,18 @@ const ListaCitas = () => {
   };
 
   useEffect(() => {
-    const obtenerCitas = async () => {
-      try {
-        const [citasBackend, serviciosData] = await Promise.all([
-          fetchCitas(),
-          fetchServicios(),
-        ]);
-
-        const citasMapeadas: Cita[] = citasBackend.map((cita: any) => ({
-          ...cita,
-          estado: mapearEstado(cita.estado),
-          hora: cita.hora.slice(0, 5),
-          fechaSimple: formatFechaSimple(cita.fecha),
-          fechaOriginal: cita.fecha,
-          fechaObjeto: parseISO(cita.fecha.split("T")[0]),
-          numeroLlegada: cita.numero_llegada ?? null,
-        }));
-
-        const citasFuturas = citasMapeadas.filter(
-          (cita) =>
-            cita.fechaObjeto && cita.fechaObjeto >= startOfDay(new Date())
-        );
-
-        setTodasLasCitas(citasFuturas);
-
-        const doctoresUnicos = Array.from(
-          new Set(
-            citasFuturas
-              .map((cita) => cita.doctor)
-              .filter(
-                (doctor): doctor is string =>
-                  doctor !== undefined && doctor !== null
-              )
-          )
-        );
-
-        setDoctores(doctoresUnicos);
-        setServicios(serviciosData);
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Hubo un error al obtener los datos",
-          variant: "destructive",
-        });
-      }
-    };
-    obtenerCitas();
-  }, []);
-
-  useEffect(() => {
     const filtrarYOrdenarCitas = () => {
-      let citasFiltradas = [...todasLasCitas];
+      let citasFiltradasLocal = [...todasLasCitas];
 
       if (busqueda) {
-        citasFiltradas = citasFiltradas.filter(
+        citasFiltradasLocal = citasFiltradasLocal.filter(
           (cita) =>
             cita.paciente.toLowerCase().includes(busqueda.toLowerCase()) ||
             cita.servicio.toLowerCase().includes(busqueda.toLowerCase()) ||
             cita.telefono.includes(busqueda)
         );
       } else {
-        citasFiltradas = citasFiltradas.filter((cita) => {
+        citasFiltradasLocal = citasFiltradasLocal.filter((cita) => {
           const fechaCita = cita.fechaObjeto;
           return isWithinInterval(fechaCita!, {
             start: startOfDay(fechaInicio),
@@ -632,14 +735,14 @@ const ListaCitas = () => {
         });
 
         if (doctorSeleccionado !== "todos") {
-          citasFiltradas = citasFiltradas.filter(
+          citasFiltradasLocal = citasFiltradasLocal.filter(
             (cita) => cita.doctor === doctorSeleccionado
           );
         }
       }
 
       if (ordenarPor) {
-        citasFiltradas.sort((a, b) => {
+        citasFiltradasLocal.sort((a, b) => {
           if (ordenarPor === "numeroLlegada") {
             const aNum = a.numeroLlegada ?? Number.MAX_SAFE_INTEGER;
             const bNum = b.numeroLlegada ?? Number.MAX_SAFE_INTEGER;
@@ -669,7 +772,7 @@ const ListaCitas = () => {
         });
       }
 
-      setCitasFiltradas(citasFiltradas);
+      setCitasFiltradas(citasFiltradasLocal);
     };
 
     filtrarYOrdenarCitas();
@@ -683,50 +786,26 @@ const ListaCitas = () => {
     ordenDireccion,
   ]);
 
-  /* ─────────────────────────────────────────────
-     Drag & drop: reordenar conservando los números existentes.
-     
-     Ejemplo:
-       Antes: [1, 4, 5, 8, 14]
-       Mueves el 8 a la posición 2 (después del 1):
-       Resultado: [1, 8, 4, 5, 14]
-     
-     Es decir: solo se reordenan los números que estaban entre
-     el origen y el destino. Los de fuera del rango no cambian.
-     ───────────────────────────────────────────── */
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = citasFiltradas.findIndex(
-      (c) => c.idcita === active.id
-    );
+    const oldIndex = citasFiltradas.findIndex((c) => c.idcita === active.id);
     const newIndex = citasFiltradas.findIndex((c) => c.idcita === over.id);
 
     if (oldIndex === -1 || newIndex === -1) return;
 
-    // 1) Mover el elemento en la lista (para reflejar el nuevo orden)
     const reordenadas = arrayMove(citasFiltradas, oldIndex, newIndex);
 
-    // 2) Rango afectado: desde min hasta max (inclusive)
     const start = Math.min(oldIndex, newIndex);
     const end = Math.max(oldIndex, newIndex);
 
-    // 3) Recolectar los numeroLlegada de las posiciones afectadas
-    //    y ordenarlos ascendentemente.
     const numerosAfectados = reordenadas
       .slice(start, end + 1)
       .map((c) => c.numeroLlegada)
       .filter((n): n is number => n !== null && n !== undefined)
       .sort((a, b) => a - b);
 
-    // 4) Reasignarlos en orden a las filas del rango afectado.
-    //    Ej: antes [1,4,5,8,14] -> mueves el 8 a pos 2
-    //        rango afectado: índices 1..3
-    //        números en ese rango tras el arrayMove: [4,5,8]
-    //        ordenados: [4,5,8]  (no cambia el conjunto, solo su posición)
-    //        resultado: [1,8,4,5,14]  ← el 8 toma el lugar del 4,
-    //                                    y 4,5 se corren una posición.
     let idx = 0;
     const conNumerosReasignados = reordenadas.map((cita, i) => {
       if (i < start || i > end) return cita;
@@ -734,7 +813,6 @@ const ListaCitas = () => {
       return { ...cita, numeroLlegada: nuevoNumero ?? cita.numeroLlegada };
     });
 
-    // Actualización optimista en el estado global
     setTodasLasCitas((prev) => {
       const mapa = new Map(
         conNumerosReasignados.map((c) => [c.idcita, c.numeroLlegada])
@@ -747,7 +825,6 @@ const ListaCitas = () => {
     });
     setCitasFiltradas(conNumerosReasignados);
 
-    // Persistir en backend (solo los que cambiaron)
     const cambios = conNumerosReasignados
       .slice(start, end + 1)
       .filter((c) => c.numeroLlegada !== null && c.numeroLlegada !== undefined)
@@ -921,7 +998,6 @@ const ListaCitas = () => {
     }
   };
 
-  /** IDs para el SortableContext */
   const ids = useMemo(
     () => citasFiltradas.map((c) => c.idcita),
     [citasFiltradas]
@@ -929,6 +1005,28 @@ const ListaCitas = () => {
 
   return (
     <div className="page-transition w-full p-4 sm:p-6 md:p-8">
+      {/* ============================================ */}
+      {/* INDICADOR DE WEBSOCKET */}
+      {/* ============================================ */}
+      <div className="flex items-center justify-end mb-2">
+        <div
+          className={cx(
+            "flex items-center gap-2 text-xs px-3 py-1 rounded-full",
+            isConnected
+              ? "bg-green-100 text-green-700"
+              : "bg-red-100 text-red-700"
+          )}
+        >
+          <span
+            className={cx(
+              "w-2 h-2 rounded-full",
+              isConnected ? "bg-green-500 animate-pulse" : "bg-red-500"
+            )}
+          />
+          {isConnected ? "Tiempo real activo" : "Sin conexión en tiempo real"}
+        </div>
+      </div>
+
       <div className="flex flex-col gap-4 mb-6 md:mb-8">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
@@ -1113,10 +1211,7 @@ const ListaCitas = () => {
                     <h3 className="text-sm font-medium">Estados de Citas</h3>
                     <div className="grid grid-cols-2 gap-2">
                       {Object.entries(estadoLabel).map(([key, label]) => (
-                        <div
-                          key={key}
-                          className="flex items-center space-x-2"
-                        >
+                        <div key={key} className="flex items-center space-x-2">
                           <Checkbox
                             id={`estado-${key}`}
                             checked={exportEstadoCitas.includes(key)}

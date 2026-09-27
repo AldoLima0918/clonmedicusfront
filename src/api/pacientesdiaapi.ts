@@ -1,16 +1,33 @@
 import axios from "axios";
+import { socketService } from "@/services/socketService";
 
-const API_URL = import.meta.env.VITE_API_URL; // Asegúrate de que esta URL sea correcta
+const API_URL = import.meta.env.VITE_API_URL;
+
+// ============================================
+// WEBSOCKET HELPER
+// ============================================
+
+const ensureSocketConnection = () => {
+  if (!socketService.isConnectedToSocket()) {
+    socketService.connect();
+  }
+};
+
+// ============================================
+// API
+// ============================================
 
 export const getPacientesDelDia = async (userId: string) => {
+  ensureSocketConnection();
+
   try {
-    const token = localStorage.getItem("token"); // Obtén el token JWT del almacenamiento local
+    const token = localStorage.getItem("token");
     const response = await axios.get(`${API_URL}/pacientes-dia`, {
       headers: {
-        Authorization: `Bearer ${token}`, // Incluye el token en el encabezado
+        Authorization: `Bearer ${token}`,
       },
       params: {
-        userId, // Envía el userId como parámetro de la solicitud
+        userId,
       },
     });
     return response.data;

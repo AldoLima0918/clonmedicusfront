@@ -1,4 +1,20 @@
+import { socketService } from "@/services/socketService";
+
 const API_URL = import.meta.env.VITE_API_URL;
+
+// ============================================
+// WEBSOCKET HELPER
+// ============================================
+
+const ensureSocketConnection = () => {
+  if (!socketService.isConnectedToSocket()) {
+    socketService.connect();
+  }
+};
+
+// ============================================
+// INTERFACES
+// ============================================
 
 export interface ExportarCitasParams {
   fechaInicio: string;
@@ -21,7 +37,13 @@ export interface CitaExportacion {
   numero_llegada?: number | null;
 }
 
+// ============================================
+// FUNCIONES API
+// ============================================
+
 export const fetchCitas = async () => {
+  ensureSocketConnection();
+
   const response = await fetch(`${API_URL}/listacitas`);
   if (!response.ok) {
     throw new Error("Error al obtener las citas");
@@ -30,6 +52,8 @@ export const fetchCitas = async () => {
 };
 
 export const fetchCitasCompletadas = async (params: ExportarCitasParams) => {
+  ensureSocketConnection();
+
   const queryParams = new URLSearchParams();
   queryParams.append("fechaInicio", params.fechaInicio);
   queryParams.append("fechaFin", params.fechaFin);
@@ -53,6 +77,8 @@ export const fetchCitasCompletadas = async (params: ExportarCitasParams) => {
 };
 
 export const fetchServicios = async () => {
+  ensureSocketConnection();
+
   const response = await fetch(`${API_URL}/servicios`);
   if (!response.ok) {
     throw new Error("Error al obtener los servicios");
@@ -61,6 +87,8 @@ export const fetchServicios = async () => {
 };
 
 export const updateEstadoCita = async (id: number, nuevoEstado: number) => {
+  ensureSocketConnection();
+
   const response = await fetch(`${API_URL}/citas/${id}/estado`, {
     method: "PUT",
     headers: {
@@ -81,6 +109,8 @@ export const updateEstadoCita = async (id: number, nuevoEstado: number) => {
 export const reordenarCitas = async (
   orden: { idcita: number; numeroLlegada: number }[]
 ) => {
+  ensureSocketConnection();
+
   const response = await fetch(`${API_URL}/citas/reordenar`, {
     method: "PUT",
     headers: {
@@ -96,6 +126,8 @@ export const reordenarCitas = async (
 };
 
 export const deleteCita = async (id: number, motivo?: string) => {
+  ensureSocketConnection();
+
   const response = await fetch(`${API_URL}/citas/${id}`, {
     method: "DELETE",
     headers: {
@@ -110,6 +142,8 @@ export const deleteCita = async (id: number, motivo?: string) => {
 };
 
 export const procesarPago = async (id: number, metodoPago: string) => {
+  ensureSocketConnection();
+
   const response = await fetch(`${API_URL}/citas/${id}/pago`, {
     method: "POST",
     headers: {
