@@ -20,16 +20,12 @@ class SocketService {
     return SocketService.instance;
   }
 
-  /**
-   * Conecta al servidor WebSocket
-   */
   connect(): void {
     if (this.socket?.connected) {
       console.log('🔌 WebSocket ya está conectado');
       return;
     }
 
-    // ✅ CLAVES REALES DE TU CLÍNICA
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('currentUser');
 
@@ -60,9 +56,6 @@ class SocketService {
     this.setupListeners();
   }
 
-  /**
-   * Configura los listeners base del socket
-   */
   private setupListeners(): void {
     if (!this.socket) return;
 
@@ -110,6 +103,17 @@ class SocketService {
 
     this.socket.on('pago-procesado', (data) => {
       this.emitLocal('pago-procesado', data);
+    });
+
+    // ============================================
+    // EVENTOS DE MENSAJES
+    // ============================================
+    this.socket.on('nuevo-mensaje', (data) => {
+      this.emitLocal('nuevo-mensaje', data);
+    });
+
+    this.socket.on('mensajes-leidos', (data) => {
+      this.emitLocal('mensajes-leidos', data);
     });
 
     // ============================================

@@ -1,4 +1,5 @@
 // src/api/mensajesapi.ts
+import { socketService } from "@/services/socketService";
 
 export type Contacto = {
   id: number;
@@ -6,7 +7,7 @@ export type Contacto = {
   rol: string;
   online: boolean;
   noLeidos: number;
-  avatarColor?: string; // lo asignamos en el front para no depender de back
+  avatarColor?: string;
 };
 
 export type Mensaje = {
@@ -29,8 +30,14 @@ const authHeaders = () => ({
   Authorization: `Bearer ${getToken()}`,
 });
 
+const ensureSocketConnection = () => {
+  if (!socketService.isConnectedToSocket()) {
+    socketService.connect();
+  }
+};
+
 /* ─────────────────────────────────────────────
-   Paleta para avatares (determinista por id)
+   Paleta para avatares
    ───────────────────────────────────────────── */
 const COLORS = [
   "from-pink-500 to-rose-500",
@@ -50,6 +57,8 @@ const colorForId = (id: number) => COLORS[id % COLORS.length];
    ───────────────────────────────────────────── */
 
 export const getContactos = async (): Promise<Contacto[]> => {
+  ensureSocketConnection();
+
   const res = await fetch(`${API_URL}/mensajes/contactos`, {
     headers: authHeaders(),
   });
@@ -66,6 +75,8 @@ export const getContactos = async (): Promise<Contacto[]> => {
 };
 
 export const getMensajes = async (contactoId: number): Promise<Mensaje[]> => {
+  ensureSocketConnection();
+
   const res = await fetch(`${API_URL}/mensajes/${contactoId}`, {
     headers: authHeaders(),
   });
@@ -77,6 +88,8 @@ export const enviarMensaje = async (
   contactoId: number,
   texto: string
 ): Promise<Mensaje> => {
+  ensureSocketConnection();
+
   const res = await fetch(`${API_URL}/mensajes/${contactoId}`, {
     method: "POST",
     headers: authHeaders(),
@@ -87,6 +100,8 @@ export const enviarMensaje = async (
 };
 
 export const marcarComoLeidos = async (contactoId: number): Promise<void> => {
+  ensureSocketConnection();
+
   const res = await fetch(`${API_URL}/mensajes/${contactoId}/leidos`, {
     method: "PATCH",
     headers: authHeaders(),
@@ -97,6 +112,8 @@ export const marcarComoLeidos = async (contactoId: number): Promise<void> => {
 export const getNoLeidosPorContacto = async (): Promise<
   Record<number, number>
 > => {
+  ensureSocketConnection();
+
   const res = await fetch(`${API_URL}/mensajes/no-leidos`, {
     headers: authHeaders(),
   });
@@ -112,6 +129,8 @@ export const getNoLeidosPorContacto = async (): Promise<
 };
 
 export const getTotalNoLeidos = async (): Promise<number> => {
+  ensureSocketConnection();
+
   const res = await fetch(`${API_URL}/mensajes/no-leidos`, {
     headers: authHeaders(),
   });
@@ -122,9 +141,7 @@ export const getTotalNoLeidos = async (): Promise<number> => {
 };
 
 /* ─────────────────────────────────────────────
-   Suscripción a cambios (evento local)
-   Se mantiene porque permite que varias instancias
-   de ChatWindow / ContactosPanel se sincronicen.
+   Suscripción local (entre componentes React)
    ───────────────────────────────────────────── */
 const EVENT_NAME = "medicus-mensajes-update";
 
@@ -137,12 +154,7 @@ export const suscribirseACambios = (cb: () => void) => {
   return () => window.removeEventListener(EVENT_NAME, cb);
 };
 
-/**
- * Polling sencillo: cada X ms notifica un cambio para que los
- * componentes vuelvan a consultar al backend.
- * Útil si no tienes websockets.
- */
-export const iniciarPolling = (intervaloMs = 8000) => {
-  const id = setInterval(() => notificarCambio(), intervaloMs);
-  return () => clearInterval(id);
-};
+/* ─────────────────────────────────────────────
+   Polling ELIMINADO
+   El WebSocket ahora se encarga del tiempo real.
+   ───────────────────────────────────────────── */

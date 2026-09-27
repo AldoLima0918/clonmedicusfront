@@ -21,10 +21,11 @@ import {
   getTotalNoLeidos,
   suscribirseACambios,
   notificarCambio,
-  iniciarPolling,
   type Contacto,
   type Mensaje,
 } from "@/api/mensajesapi";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { useAuth } from "@/contexts/AuthContext";
 
 /* ─────────────────────────────────────────────
    Helpers
@@ -46,7 +47,7 @@ const formatHora = (iso: string) => {
 };
 
 /* ─────────────────────────────────────────────
-   Ventana de chat (estilo Facebook)
+   Ventana de chat
    ───────────────────────────────────────────── */
 const ChatWindow = ({
   contacto,
@@ -92,12 +93,39 @@ const ChatWindow = ({
     });
   }, [cargar]);
 
+  // Suscripción local (para cuando yo envío un mensaje, otros componentes se enteran)
   useEffect(() => {
     const unsub = suscribirseACambios(() => {
       cargar({ marcarLeidos: !minimized && isAtBottomRef.current });
     });
     return unsub;
   }, [cargar, minimized]);
+
+  // ✅ WebSocket: escuchar mensajes nuevos y leídos
+  const { on } = useWebSocket();
+
+  useEffect(() => {
+    const unsubNuevo = on("nuevo-mensaje", (data: any) => {
+      // Si es de este chat, recargar
+      if (data?.emisorId === contacto.id) {
+        console.log("💬 Mensaje nuevo de este contacto, recargando...");
+        cargar({ marcarLeidos: !minimized && isAtBottomRef.current });
+      }
+    });
+
+    const unsubLeidos = on("mensajes-leidos", (data: any) => {
+      // El contacto marcó como leídos mis mensajes
+      if (data?.leidosPor === contacto.id) {
+        console.log("✅ El contacto marcó como leídos mis mensajes");
+        cargar({ marcarLeidos: false });
+      }
+    });
+
+    return () => {
+      unsubNuevo();
+      unsubLeidos();
+    };
+  }, [on, contacto.id, cargar, minimized]);
 
   useEffect(() => {
     if (mensajes.length === 0) return;
@@ -321,7 +349,6 @@ const ContactosPanel = ({
         "w-[300px] sm:w-[340px] max-h-[480px]"
       )}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/60 bg-gradient-to-r from-primary/5 to-transparent">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
@@ -341,7 +368,6 @@ const ContactosPanel = ({
         </button>
       </div>
 
-      {/* Buscador */}
       <div className="px-3 py-2 border-b border-border/40">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -354,7 +380,6 @@ const ContactosPanel = ({
         </div>
       </div>
 
-      {/* Lista */}
       <div className="flex-1 overflow-y-auto py-1">
         {filtrados.length === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
@@ -421,6 +446,9 @@ const Mensajes = () => {
   const [chatActivo, setChatActivo] = useState<Contacto | null>(null);
   const [chatMinimizado, setChatMinimizado] = useState(false);
 
+  const { isConnected, on } = useWebSocket();
+  const { user } = useAuth();
+
   const refrescar = useCallback(async () => {
     try {
       const [cs, nl, total] = await Promise.all([
@@ -439,12 +467,39 @@ const Mensajes = () => {
   useEffect(() => {
     refrescar();
     const unsub = suscribirseACambios(() => refrescar());
-    const stopPolling = iniciarPolling(8000); // cada 8s
+    // ✅ Polling eliminado: ahora WebSocket se encarga
     return () => {
       unsub();
-      stopPolling();
     };
   }, [refrescar]);
+
+  // ✅ WebSocket: escuchar nuevo-mensaje y mensajes-leidos
+  useEffect(() => {
+    const unsubNuevo = on("nuevo-mensaje", (data: any) => {
+      console.log("💬 Nuevo mensaje recibido vía WebSocket:", data);
+      // Refrescar contadores y contactos
+      refrescar();
+    });
+
+    const unsubLeidos = on("mensajes-leidos", (data: any) => {
+      console.log("✅ Mensajes leídos vía WebSocket:", data);
+      // Refrescar para actualizar contadores si aplica
+      refrescar();
+    });
+
+    return () => {
+      unsubNuevo();
+      unsubLeidos();
+    };
+  }, [on, refrescar]);
+
+  useEffect(() => {
+    if (!isConnected) {
+      console.warn(
+        "⚠️ WebSocket no conectado - los mensajes no se actualizarán en tiempo real"
+      );
+    }
+  }, [isConnected]);
 
   const handleSelectContacto = (c: Contacto) => {
     setChatActivo(c);
@@ -457,10 +512,6 @@ const Mensajes = () => {
     setChatMinimizado(false);
   };
 
-  /**
-   * Toggle del panel de contactos.
-   * Si hay un chat abierto, se minimiza automáticamente al abrir el panel.
-   */
   const handleTogglePanel = () => {
     setPanelAbierto((prev) => {
       const next = !prev;
