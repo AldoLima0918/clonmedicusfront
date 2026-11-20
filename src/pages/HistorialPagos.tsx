@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Calendar as CalendarIcon,
   History,
@@ -43,12 +43,10 @@ import {
 } from "@/components/ui/select";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-
 const metodoPagoLabel: Record<string, string> = {
   Efectivo: "Efectivo",
   QR: "QR",
 };
-
 interface Pago {
   idpago: number;
   paciente: string;
@@ -58,12 +56,10 @@ interface Pago {
   monto: string;
   metodo_pago: string;
 }
-
 interface Doctor {
   idusuario: number;
   nombre_completo: string;
 }
-
 /** Card de un pago para vista móvil */
 const PagoCard = ({ pago }: { pago: Pago }) => (
   <Card className="shadow-sm border border-border/60">
@@ -78,7 +74,6 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
             {pago.doctor}
           </p>
         </div>
-
         <Badge
           variant="outline"
           className={
@@ -90,7 +85,6 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
           {metodoPagoLabel[pago.metodo_pago] || pago.metodo_pago}
         </Badge>
       </div>
-
       {/* Detalles */}
       <div className="grid grid-cols-1 gap-2 text-sm pt-2 border-t">
         <div className="flex justify-between gap-2">
@@ -99,7 +93,6 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
             {format(new Date(pago.fecha), "PP", { locale: es })}
           </span>
         </div>
-
         <div className="flex justify-between gap-2">
           <span className="text-muted-foreground shrink-0">Concepto</span>
           <span className="font-medium text-right break-words">
@@ -114,7 +107,6 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
             )}
           </span>
         </div>
-
         <div className="flex justify-between gap-2">
           <span className="text-muted-foreground">Monto</span>
           <span className="font-semibold text-right">
@@ -125,124 +117,141 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
     </CardContent>
   </Card>
 );
+const CalendarioFecha = ({
+  fecha,
+  onSelect,
+}: {
+  fecha: Date | undefined;
+  onSelect: (fecha: Date | undefined) => void;
+}) => {
+  const [mesVisible, setMesVisible] = useState(fecha ?? new Date());
+  const meses = Array.from({ length: 12 }, (_, i) =>
+    format(new Date(2026, i, 1), "MMMM", { locale: es })
+  );
+  const anioActual = new Date().getFullYear();
+  const anioMinimo = Math.min(anioActual - 100, mesVisible.getFullYear());
+  const anioMaximo = Math.max(anioActual + 10, mesVisible.getFullYear());
+  const anios = Array.from(
+    { length: anioMaximo - anioMinimo + 1 },
+    (_, i) => anioMaximo - i
+  );
+
+  useEffect(() => {
+    if (fecha) setMesVisible(fecha);
+  }, [fecha]);
+
+  return (
+    <div className="w-[280px] rounded-xl bg-background p-3">
+      <div className="mb-2 grid grid-cols-[1fr_90px] gap-2 border-b pb-3">
+        <select
+          aria-label="Seleccionar mes"
+          value={mesVisible.getMonth()}
+          onChange={(e) => setMesVisible(new Date(mesVisible.getFullYear(), Number(e.target.value), 1))}
+          className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-sm font-medium capitalize focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          {meses.map((mes, i) => (
+            <option key={i} value={i}>{mes.charAt(0).toUpperCase() + mes.slice(1)}</option>
+          ))}
+        </select>
+        <select
+          aria-label="Seleccionar año"
+          value={mesVisible.getFullYear()}
+          onChange={(e) => setMesVisible(new Date(Number(e.target.value), mesVisible.getMonth(), 1))}
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          {anios.map((anio) => (
+            <option key={anio} value={anio}>{anio}</option>
+          ))}
+        </select>
+      </div>
+      <Calendar
+        mode="single"
+        locale={es}
+        month={mesVisible}
+        onMonthChange={setMesVisible}
+        selected={fecha}
+        onSelect={onSelect}
+        className="mx-auto p-0"
+        initialFocus
+      />
+    </div>
+  );
+};
 
 const HistorialPagos = () => {
   const [pagos, setPagos] = useState<Pago[]>([]);
   const [doctores, setDoctores] = useState<Doctor[]>([]);
   const [busqueda, setBusqueda] = useState("");
-  const [fechaInicio, setFechaInicio] = useState<Date | undefined>(undefined);
-  const [fechaFin, setFechaFin] = useState<Date | undefined>(undefined);
+  const [fechaInicioSeleccionada, setFechaInicio] = useState<Date | undefined>(() => new Date());
+  const [fechaFinSeleccionada, setFechaFin] = useState<Date | undefined>(() => new Date());
+  const sinFechas = !fechaInicioSeleccionada && !fechaFinSeleccionada;
+  const diaActual = format(new Date(), "yyyy-MM-dd");
+  const hoy = useMemo(() => {
+    const [anio, mes, dia] = diaActual.split("-").map(Number);
+    return new Date(anio, mes - 1, dia);
+  }, [diaActual]);
+  const fechaInicio = sinFechas ? hoy : fechaInicioSeleccionada;
+  const fechaFin = sinFechas ? hoy : fechaFinSeleccionada;
   const [doctorSeleccionado, setDoctorSeleccionado] = useState<string>("0");
   const [error, setError] = useState<string | null>(null);
-  const [ordenarPor, setOrdenarPor] = useState<string | null>(null);
-  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
-
+  const [pagina, setPagina] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPaginas, setTotalPaginas] = useState(1);
+  const [totales, setTotales] = useState({ recaudado: "0", efectivo: "0", qr: "0" });
+  const [cargando, setCargando] = useState(true);
+  const [exportando, setExportando] = useState(false);
+  const filtros = () => ({
+    busqueda, fechaInicio, fechaFin,
+    iddoctor: doctorSeleccionado !== "0" ? parseInt(doctorSeleccionado) : undefined,
+  });
   useEffect(() => {
     document.title = "Historial de Pagos | Sistema de Gestión Médica";
     cargarDoctores();
-    cargarPagos();
   }, []);
-
   useEffect(() => {
-    cargarPagos();
-  }, [busqueda, fechaInicio, fechaFin, doctorSeleccionado]);
-
+    const controller = new AbortController();
+    setCargando(true);
+    setError(null);
+    getHistorialPagos({ ...filtros(), pagina }, controller.signal)
+      .then((datos) => {
+        if (controller.signal.aborted) return;
+        setPagos(datos.pagos);
+        setTotal(datos.total);
+        setTotalPaginas(datos.totalPaginas);
+        setTotales(datos.totales);
+        if (datos.pagina !== pagina) setPagina(datos.pagina);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        console.error("Error al cargar los pagos:", error);
+        setPagos([]);
+        setTotal(0);
+        setTotalPaginas(1);
+        setTotales({ recaudado: "0", efectivo: "0", qr: "0" });
+        setError("No se pudieron cargar los pagos. Verifica la conexión al servidor.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setCargando(false); });
+    return () => controller.abort();
+  }, [busqueda, fechaInicio, fechaFin, doctorSeleccionado, pagina]);
   const cargarDoctores = async () => {
-    try {
-      const datos = await getDoctores();
-      setDoctores(datos);
-    } catch (error) {
-      console.error("Error al cargar los doctores:", error);
-    }
+    try { setDoctores(await getDoctores()); }
+    catch (error) { console.error("Error al cargar los doctores:", error); }
   };
-
-  const cargarPagos = async () => {
+  const totalRecaudado = Number(totales.recaudado);
+  const totalEfectivo = Number(totales.efectivo);
+  const totalQR = Number(totales.qr);
+  const pagosFiltrados = pagos;
+  const exportToPDF = async () => {
+    setExportando(true);
     try {
-      const filtros = {
-        busqueda,
-        fechaInicio,
-        fechaFin,
-        iddoctor:
-          doctorSeleccionado !== "0" ? parseInt(doctorSeleccionado) : undefined,
-      };
-      const datos = await getHistorialPagos(filtros);
-      setPagos(datos);
-      setError(null);
-    } catch (error) {
-      console.error("Error al cargar los pagos:", error);
-      setError(
-        "No se pudieron cargar los pagos. Verifica la conexión al servidor."
-      );
-    }
-  };
-
-  const filtrarPagos = () => {
-    let resultado = pagos;
-
-    if (busqueda) {
-      resultado = resultado.filter(
-        (p) =>
-          p.paciente.toLowerCase().includes(busqueda.toLowerCase()) ||
-          p.doctor.toLowerCase().includes(busqueda.toLowerCase()) ||
-          p.concepto.some((c) =>
-            c.toLowerCase().includes(busqueda.toLowerCase())
-          ) ||
-          p.monto.includes(busqueda)
-      );
-    }
-
-    if (fechaInicio) {
-      resultado = resultado.filter((p) => new Date(p.fecha) >= fechaInicio);
-    }
-
-    if (fechaFin) {
-      const finDelDia = new Date(fechaFin);
-      finDelDia.setHours(23, 59, 59, 999);
-      resultado = resultado.filter((p) => new Date(p.fecha) <= finDelDia);
-    }
-
-    if (ordenarPor) {
-      resultado.sort((a, b) => {
-        const valorA = a[ordenarPor as keyof Pago] || "";
-        const valorB = b[ordenarPor as keyof Pago] || "";
-
-        if (valorA < valorB) {
-          return ordenDireccion === "asc" ? -1 : 1;
-        }
-        if (valorA > valorB) {
-          return ordenDireccion === "asc" ? 1 : -1;
-        }
-        return 0;
-      });
-    }
-
-    return resultado;
-  };
-
-  const totalRecaudado = filtrarPagos().reduce(
-    (sum, p) => sum + parseFloat(p.monto),
-    0
-  );
-
-  const totalEfectivo = filtrarPagos()
-    .filter((p) => p.metodo_pago === "Efectivo")
-    .reduce((sum, p) => sum + parseFloat(p.monto), 0);
-
-  const totalQR = filtrarPagos()
-    .filter((p) => p.metodo_pago === "QR")
-    .reduce((sum, p) => sum + parseFloat(p.monto), 0);
-
-  const pagosFiltrados = filtrarPagos();
-
-  const exportToPDF = () => {
-    try {
+      const reporte = await getHistorialPagos({ ...filtros(), exportar: true });
+      const pagosFiltrados: Pago[] = reporte.pagos;
+      const totalRecaudado = Number(reporte.totales.recaudado);
       const doc = new jsPDF("landscape");
-
       const title = "Historial de Pagos";
       const fechaExportacion = format(new Date(), "dd/MM/yyyy HH:mm", {
         locale: es,
       });
-
       let fechaSubtitle = "";
       if (fechaInicio && fechaFin) {
         fechaSubtitle = `Desde ${format(fechaInicio, "dd/MM/yyyy", {
@@ -257,18 +266,14 @@ const HistorialPagos = () => {
           locale: es,
         })}`;
       }
-
       doc.setFontSize(18);
       doc.setTextColor(40);
       doc.text(title, 14, 20);
-
       doc.setFontSize(12);
       doc.text(`Generado el: ${fechaExportacion}`, 14, 27);
-
       if (fechaSubtitle) {
         doc.text(`Rango de fechas: ${fechaSubtitle}`, 14, 32);
       }
-
       const tableData = pagosFiltrados.map((pago) => [
         pago.paciente,
         pago.doctor,
@@ -281,7 +286,6 @@ const HistorialPagos = () => {
         })}`,
         metodoPagoLabel[pago.metodo_pago] || pago.metodo_pago,
       ]);
-
       tableData.push([
         "TOTAL",
         "",
@@ -292,7 +296,6 @@ const HistorialPagos = () => {
         })}`,
         "",
       ]);
-
       const headers = [
         "Paciente",
         "Doctor",
@@ -301,7 +304,6 @@ const HistorialPagos = () => {
         "Monto",
         "Método de Pago",
       ];
-
       autoTable(doc, {
         head: [headers],
         body: tableData,
@@ -329,7 +331,6 @@ const HistorialPagos = () => {
         },
         margin: { left: 14 },
       });
-
       const fileName = `Historial_Pagos_${format(
         new Date(),
         "yyyyMMdd_HHmmss"
@@ -340,9 +341,10 @@ const HistorialPagos = () => {
       alert(
         "Ocurrió un error al generar el PDF. Por favor intenta nuevamente."
       );
+    } finally {
+      setExportando(false);
     }
   };
-
   return (
     <div className="page-transition w-full p-4 sm:p-6 md:p-8">
       {error && (
@@ -350,7 +352,6 @@ const HistorialPagos = () => {
           {error}
         </div>
       )}
-
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6 md:mb-8">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
@@ -361,7 +362,6 @@ const HistorialPagos = () => {
           </p>
         </div>
       </div>
-
       {/* Tarjetas de totales: 1 col en móvil, 3 en desktop */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6 md:mb-8">
         <Card className="shadow-md border-none">
@@ -374,12 +374,11 @@ const HistorialPagos = () => {
             <div className="flex items-center">
               <Receipt className="h-5 w-5 text-medical-dark mr-2 shrink-0" />
               <div className="text-xl sm:text-2xl font-bold break-all">
-                Bs.{totalRecaudado.toLocaleString()}
+                Bs.{cargando ? "…" : totalRecaudado.toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
           </CardContent>
         </Card>
-
         <Card className="shadow-md border-none">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -390,12 +389,11 @@ const HistorialPagos = () => {
             <div className="flex items-center">
               <Receipt className="h-5 w-5 text-green-600 mr-2 shrink-0" />
               <div className="text-xl sm:text-2xl font-bold break-all">
-                Bs.{totalEfectivo.toLocaleString()}
+                Bs.{cargando ? "…" : totalEfectivo.toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
           </CardContent>
         </Card>
-
         <Card className="shadow-md border-none">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -406,13 +404,12 @@ const HistorialPagos = () => {
             <div className="flex items-center">
               <Receipt className="h-5 w-5 text-blue-600 mr-2 shrink-0" />
               <div className="text-xl sm:text-2xl font-bold break-all">
-                Bs.{totalQR.toLocaleString()}
+                Bs.{cargando ? "…" : totalQR.toLocaleString("es-BO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
-
       <Card className="shadow-md border-none overflow-hidden">
         <CardHeader className="bg-medical-light bg-opacity-30 p-4 sm:p-6">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -422,7 +419,6 @@ const HistorialPagos = () => {
                 Historial de Pagos Registrados
               </CardTitle>
             </div>
-
             {/* Filtros: se apilan en móvil, se alinean en desktop */}
             <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
               <div className="relative w-full sm:w-auto">
@@ -431,14 +427,13 @@ const HistorialPagos = () => {
                   placeholder="Buscar pagos..."
                   className="pl-8 w-full sm:w-[220px]"
                   value={busqueda}
-                  onChange={(e) => setBusqueda(e.target.value)}
+                  onChange={(e) => { setPagina(1); setBusqueda(e.target.value); }}
                 />
               </div>
-
               <div className="grid grid-cols-1 sm:flex sm:flex-row gap-2">
                 <Select
                   value={doctorSeleccionado}
-                  onValueChange={setDoctorSeleccionado}
+                  onValueChange={(valor) => { setPagina(1); setDoctorSeleccionado(valor); }}
                 >
                   <SelectTrigger className="w-full sm:w-[180px]">
                     <div className="flex items-center">
@@ -458,7 +453,6 @@ const HistorialPagos = () => {
                     ))}
                   </SelectContent>
                 </Select>
-
                 <div className="grid grid-cols-2 sm:flex sm:flex-row gap-2">
                   <Popover>
                     <PopoverTrigger asChild>
@@ -478,15 +472,9 @@ const HistorialPagos = () => {
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0">
-                      <Calendar
-                        mode="single"
-                        selected={fechaInicio}
-                        onSelect={setFechaInicio}
-                        initialFocus
-                      />
+                      <CalendarioFecha fecha={fechaInicio} onSelect={(fecha) => { setPagina(1); setFechaInicio(fecha); }} />
                     </PopoverContent>
                   </Popover>
-
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
@@ -505,34 +493,30 @@ const HistorialPagos = () => {
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0">
-                      <Calendar
-                        mode="single"
-                        selected={fechaFin}
-                        onSelect={setFechaFin}
-                        initialFocus
-                      />
+                      <CalendarioFecha fecha={fechaFin} onSelect={(fecha) => { setPagina(1); setFechaFin(fecha); }} />
                     </PopoverContent>
                   </Popover>
                 </div>
-
                 {/* Botón Exportar PDF: visible también en móvil, ancho completo */}
                 <Button
                   onClick={exportToPDF}
+                  disabled={exportando || cargando || !!error}
                   variant="outline"
                   className="w-full sm:w-auto gap-2 bg-red-600 hover:bg-red-700 text-white"
                 >
                   <Download className="h-4 w-4" />
-                  <span>Exportar PDF</span>
+                  <span>{exportando ? "Exportando..." : "Exportar PDF"}</span>
                 </Button>
               </div>
             </div>
           </div>
         </CardHeader>
-
         <CardContent className="p-0">
           {/* ====== VISTA MÓVIL (cards) ====== */}
           <div className="md:hidden p-3 sm:p-4 space-y-3">
-            {pagosFiltrados.length > 0 ? (
+            {cargando ? (
+              <div className="p-6 text-center text-muted-foreground">Cargando pagos...</div>
+            ) : pagosFiltrados.length > 0 ? (
               pagosFiltrados.map((pago) => (
                 <PagoCard key={pago.idpago} pago={pago} />
               ))
@@ -542,7 +526,6 @@ const HistorialPagos = () => {
               </div>
             )}
           </div>
-
           {/* ====== VISTA DESKTOP (tabla) ====== */}
           <div className="hidden md:block overflow-x-auto">
             <Table>
@@ -557,7 +540,9 @@ const HistorialPagos = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {pagosFiltrados.length > 0 ? (
+                {cargando ? (
+                  <TableRow><TableCell colSpan={6} className="h-24 text-center">Cargando pagos...</TableCell></TableRow>
+                ) : pagosFiltrados.length > 0 ? (
                   pagosFiltrados.map((pago) => (
                     <TableRow key={pago.idpago}>
                       <TableCell className="font-medium">
@@ -606,10 +591,21 @@ const HistorialPagos = () => {
               </TableBody>
             </Table>
           </div>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t p-4">
+            <span className="text-sm text-muted-foreground">
+              {cargando ? "Cargando..." : total === 0 ? "0 registros" : `Mostrando ${(pagina - 1) * 30 + 1}–${Math.min(pagina * 30, total)} de ${total} pagos`}
+            </span>
+            <div className="flex flex-wrap justify-center items-center gap-2">
+              <Button variant="outline" size="sm" disabled={cargando || pagina <= 1} onClick={() => setPagina(1)}>Primera</Button>
+              <Button variant="outline" size="sm" disabled={cargando || pagina <= 1} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
+              <span className="text-sm whitespace-nowrap">{pagina} / {totalPaginas}</span>
+              <Button variant="outline" size="sm" disabled={cargando || pagina >= totalPaginas} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
+              <Button variant="outline" size="sm" disabled={cargando || pagina >= totalPaginas} onClick={() => setPagina(totalPaginas)}>Última</Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
   );
 };
-
 export default HistorialPagos;
