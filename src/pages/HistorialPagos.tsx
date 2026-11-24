@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Calendar as CalendarIcon,
   History,
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import { es } from "date-fns/locale";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -32,7 +33,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+
 import { getHistorialPagos, getDoctores } from "@/api/historialPagosApi";
 import {
   Select,
@@ -90,7 +91,7 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
         <div className="flex justify-between gap-2">
           <span className="text-muted-foreground shrink-0">Fecha</span>
           <span className="font-medium text-right">
-            {format(new Date(pago.fecha), "PP", { locale: es })}
+            {fechaPago(pago.fecha, "PP")}
           </span>
         </div>
         <div className="flex justify-between gap-2">
@@ -117,91 +118,57 @@ const PagoCard = ({ pago }: { pago: Pago }) => (
     </CardContent>
   </Card>
 );
-const CalendarioFecha = ({
-  fecha,
-  onSelect,
-}: {
-  fecha: Date | undefined;
-  onSelect: (fecha: Date | undefined) => void;
-}) => {
-  const [mesVisible, setMesVisible] = useState(fecha ?? new Date());
-  const meses = Array.from({ length: 12 }, (_, i) =>
-    format(new Date(2026, i, 1), "MMMM", { locale: es })
-  );
-  const anioActual = new Date().getFullYear();
-  const anioMinimo = Math.min(anioActual - 100, mesVisible.getFullYear());
-  const anioMaximo = Math.max(anioActual + 10, mesVisible.getFullYear());
-  const anios = Array.from(
-    { length: anioMaximo - anioMinimo + 1 },
-    (_, i) => anioMaximo - i
-  );
-
-  useEffect(() => {
-    if (fecha) setMesVisible(fecha);
-  }, [fecha]);
-
-  return (
-    <div className="w-[280px] rounded-xl bg-background p-3">
-      <div className="mb-2 grid grid-cols-[1fr_90px] gap-2 border-b pb-3">
-        <select
-          aria-label="Seleccionar mes"
-          value={mesVisible.getMonth()}
-          onChange={(e) => setMesVisible(new Date(mesVisible.getFullYear(), Number(e.target.value), 1))}
-          className="h-9 min-w-0 rounded-md border border-input bg-background px-2 text-sm font-medium capitalize focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          {meses.map((mes, i) => (
-            <option key={i} value={i}>{mes.charAt(0).toUpperCase() + mes.slice(1)}</option>
-          ))}
-        </select>
-        <select
-          aria-label="Seleccionar año"
-          value={mesVisible.getFullYear()}
-          onChange={(e) => setMesVisible(new Date(Number(e.target.value), mesVisible.getMonth(), 1))}
-          className="h-9 rounded-md border border-input bg-background px-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          {anios.map((anio) => (
-            <option key={anio} value={anio}>{anio}</option>
-          ))}
-        </select>
-      </div>
-      <Calendar
-        mode="single"
-        locale={es}
-        month={mesVisible}
-        onMonthChange={setMesVisible}
-        selected={fecha}
-        onSelect={onSelect}
-        className="mx-auto p-0"
-        initialFocus
-      />
-    </div>
-  );
+const fechaBolivia = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/La_Paz", year: "numeric", month: "2-digit", day: "2-digit"
+}).formatToParts(new Date()).filter(p => p.type !== "literal").reduce((a, p) => ({ ...a, [p.type]: p.value }), {} as Record<string, string>);
+const hoyBolivia = () => {
+  const p = fechaBolivia();
+  return `${p.year}-${p.month}-${p.day}`;
 };
+const fechaLocal = (valor: string) => {
+  const [y, m, d] = valor.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d, 12);
+};
+const fechaPago = (valor: string, patron: string) => format(fechaLocal(valor), patron, { locale: es });
+const opciones = [
+  ["hoy", "Hoy"], ["ayer", "Ayer"], ["semana", "Esta semana"],
+  ["mes", "Este mes"], ["mes_pasado", "Mes pasado"],
+  ["fecha", "Fecha específica"], ["rango", "Rango de fechas"], ["anio", "Año"]
+];
 
 const HistorialPagos = () => {
   const [pagos, setPagos] = useState<Pago[]>([]);
   const [doctores, setDoctores] = useState<Doctor[]>([]);
   const [busqueda, setBusqueda] = useState("");
-  const [fechaInicioSeleccionada, setFechaInicio] = useState<Date | undefined>(() => new Date());
-  const [fechaFinSeleccionada, setFechaFin] = useState<Date | undefined>(() => new Date());
-  const sinFechas = !fechaInicioSeleccionada && !fechaFinSeleccionada;
-  const diaActual = format(new Date(), "yyyy-MM-dd");
-  const hoy = useMemo(() => {
-    const [anio, mes, dia] = diaActual.split("-").map(Number);
-    return new Date(anio, mes - 1, dia);
-  }, [diaActual]);
-  const fechaInicio = sinFechas ? hoy : fechaInicioSeleccionada;
-  const fechaFin = sinFechas ? hoy : fechaFinSeleccionada;
+  const [periodo, setPeriodo] = useState("hoy");
+  const [diaActual, setDiaActual] = useState(hoyBolivia);
+  const [fecha, setFecha] = useState<Date | undefined>(() => fechaLocal(hoyBolivia()));
+  const [rango, setRango] = useState<DateRange | undefined>();
+  const [anio, setAnio] = useState(() => hoyBolivia().slice(0, 4));
+  const [calendarioAbierto, setCalendarioAbierto] = useState(false);
+  const [mesVisible, setMesVisible] = useState(() => fechaLocal(hoyBolivia()));
+  const fechaInicio = periodo === "fecha" ? fecha : periodo === "rango" ? rango?.from : undefined;
+  const fechaFin = periodo === "fecha" ? fecha : periodo === "rango" ? rango?.to : undefined;
+  const incompleto = !busqueda.trim() && ((periodo === "fecha" && !fecha) || (periodo === "rango" && (!rango?.from || !rango?.to)));
+  useEffect(() => {
+    const timer = window.setInterval(() => setDiaActual(hoyBolivia()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [doctorSeleccionado, setDoctorSeleccionado] = useState<string>("0");
   const [error, setError] = useState<string | null>(null);
   const [pagina, setPagina] = useState(1);
+  const [paginaEscrita, setPaginaEscrita] = useState("1");
+
+  useEffect(() => {
+    setPaginaEscrita(String(pagina));
+  }, [pagina]);
   const [total, setTotal] = useState(0);
   const [totalPaginas, setTotalPaginas] = useState(1);
   const [totales, setTotales] = useState({ recaudado: "0", efectivo: "0", qr: "0" });
   const [cargando, setCargando] = useState(true);
   const [exportando, setExportando] = useState(false);
   const filtros = () => ({
-    busqueda, fechaInicio, fechaFin,
+    busqueda, fechaInicio, fechaFin, periodo, anio: Number(anio),
     iddoctor: doctorSeleccionado !== "0" ? parseInt(doctorSeleccionado) : undefined,
   });
   useEffect(() => {
@@ -209,6 +176,11 @@ const HistorialPagos = () => {
     cargarDoctores();
   }, []);
   useEffect(() => {
+    if (incompleto) {
+      setPagos([]); setTotal(0); setTotalPaginas(1);
+      setTotales({ recaudado: "0", efectivo: "0", qr: "0" });
+      setCargando(false); setError(null); return;
+    }
     const controller = new AbortController();
     setCargando(true);
     setError(null);
@@ -232,7 +204,7 @@ const HistorialPagos = () => {
       })
       .finally(() => { if (!controller.signal.aborted) setCargando(false); });
     return () => controller.abort();
-  }, [busqueda, fechaInicio, fechaFin, doctorSeleccionado, pagina]);
+  }, [busqueda, fechaInicio, fechaFin, doctorSeleccionado, pagina, periodo, anio, diaActual, incompleto]);
   const cargarDoctores = async () => {
     try { setDoctores(await getDoctores()); }
     catch (error) { console.error("Error al cargar los doctores:", error); }
@@ -249,23 +221,8 @@ const HistorialPagos = () => {
       const totalRecaudado = Number(reporte.totales.recaudado);
       const doc = new jsPDF("landscape");
       const title = "Historial de Pagos";
-      const fechaExportacion = format(new Date(), "dd/MM/yyyy HH:mm", {
-        locale: es,
-      });
-      let fechaSubtitle = "";
-      if (fechaInicio && fechaFin) {
-        fechaSubtitle = `Desde ${format(fechaInicio, "dd/MM/yyyy", {
-          locale: es,
-        })} hasta ${format(fechaFin, "dd/MM/yyyy", { locale: es })}`;
-      } else if (fechaInicio) {
-        fechaSubtitle = `Desde ${format(fechaInicio, "dd/MM/yyyy", {
-          locale: es,
-        })}`;
-      } else if (fechaFin) {
-        fechaSubtitle = `Hasta ${format(fechaFin, "dd/MM/yyyy", {
-          locale: es,
-        })}`;
-      }
+      const fechaExportacion = new Intl.DateTimeFormat("es-BO", { timeZone: "America/La_Paz", dateStyle: "short", timeStyle: "short" }).format(new Date());
+      const fechaSubtitle = busqueda.trim() ? "Todo el historial" : reporte.fechaInicio && reporte.fechaFin ? `${fechaPago(reporte.fechaInicio, "dd/MM/yyyy")} - ${fechaPago(reporte.fechaFin, "dd/MM/yyyy")}` : "";
       doc.setFontSize(18);
       doc.setTextColor(40);
       doc.text(title, 14, 20);
@@ -277,7 +234,7 @@ const HistorialPagos = () => {
       const tableData = pagosFiltrados.map((pago) => [
         pago.paciente,
         pago.doctor,
-        format(new Date(pago.fecha), "dd/MM/yyyy", { locale: es }),
+        fechaPago(pago.fecha, "dd/MM/yyyy"),
         Array.isArray(pago.concepto)
           ? pago.concepto.join(", ")
           : pago.concepto,
@@ -331,10 +288,7 @@ const HistorialPagos = () => {
         },
         margin: { left: 14 },
       });
-      const fileName = `Historial_Pagos_${format(
-        new Date(),
-        "yyyyMMdd_HHmmss"
-      )}.pdf`;
+      const fileName = `Historial_Pagos_${hoyBolivia()}_${Date.now()}.pdf`;
       doc.save(fileName);
     } catch (error) {
       console.error("Error al generar el PDF:", error);
@@ -424,10 +378,14 @@ const HistorialPagos = () => {
               <div className="relative w-full sm:w-auto">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar pagos..."
-                  className="pl-8 w-full sm:w-[220px]"
+                  placeholder="Buscar pagos por nombre/ci de paciente...."
+                  title="Buscar por nombre o CI en todo el historial"
+                  className="pl-8 w-full sm:w-[400px]"
                   value={busqueda}
-                  onChange={(e) => { setPagina(1); setBusqueda(e.target.value); }}
+                  onChange={(e) => {
+                    setPagina(1);
+                    setBusqueda(e.target.value);
+                  }}
                 />
               </div>
               <div className="grid grid-cols-1 sm:flex sm:flex-row gap-2">
@@ -453,54 +411,32 @@ const HistorialPagos = () => {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="grid grid-cols-2 sm:flex sm:flex-row gap-2">
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal sm:w-[140px]",
-                          !fechaInicio && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-                        {fechaInicio ? (
-                          format(fechaInicio, "PP", { locale: es })
-                        ) : (
-                          <span>Desde</span>
-                        )}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <CalendarioFecha fecha={fechaInicio} onSelect={(fecha) => { setPagina(1); setFechaInicio(fecha); }} />
-                    </PopoverContent>
-                  </Popover>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={cn(
-                          "w-full justify-start text-left font-normal sm:w-[140px]",
-                          !fechaFin && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-                        {fechaFin ? (
-                          format(fechaFin, "PP", { locale: es })
-                        ) : (
-                          <span>Hasta</span>
-                        )}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <CalendarioFecha fecha={fechaFin} onSelect={(fecha) => { setPagina(1); setFechaFin(fecha); }} />
-                    </PopoverContent>
-                  </Popover>
-                </div>
+                <Select value={periodo} onValueChange={(v) => { setPagina(1); setPeriodo(v); setCalendarioAbierto(v === "fecha" || v === "rango"); }}>
+                  <SelectTrigger className="w-full sm:w-[160px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>{opciones.map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}</SelectContent>
+                </Select>
+                {periodo === "anio" && <Select value={anio} onValueChange={v => { setPagina(1); setAnio(v); }}>
+                  <SelectTrigger className="w-full sm:w-[100px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>{Array.from({ length: 101 }, (_, i) => Number(diaActual.slice(0, 4)) - i).map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
+                </Select>}
+                {(periodo === "fecha" || periodo === "rango") && <Popover open={calendarioAbierto} onOpenChange={setCalendarioAbierto}>
+                  <PopoverTrigger asChild><Button variant="outline" className="w-full sm:w-auto"><CalendarIcon className="mr-2 h-4 w-4" />{periodo === "fecha" ? fecha ? format(fecha, "dd/MM/yyyy") : "Seleccionar fecha" : rango?.from ? `${format(rango.from, "dd/MM/yyyy")} - ${rango.to ? format(rango.to, "dd/MM/yyyy") : "Hasta"}` : "Seleccionar rango"}</Button></PopoverTrigger>
+                  <PopoverContent className="w-auto p-3">
+                    <div className="flex gap-2 mb-2">
+                      <select aria-label="Mes" className="border rounded p-2" value={mesVisible.getMonth()} onChange={e => setMesVisible(new Date(mesVisible.getFullYear(), Number(e.target.value), 1, 12))}>{Array.from({ length: 12 }, (_, i) => <option key={i} value={i}>{format(new Date(2026, i, 1), "MMMM", { locale: es })}</option>)}</select>
+                      <select aria-label="Año" className="border rounded p-2" value={mesVisible.getFullYear()} onChange={e => setMesVisible(new Date(Number(e.target.value), mesVisible.getMonth(), 1, 12))}>{Array.from({ length: 111 }, (_, i) => Number(diaActual.slice(0, 4)) + 10 - i).map(y => <option key={y} value={y}>{y}</option>)}</select>
+                    </div>
+                    {periodo === "fecha" ? <Calendar mode="single" locale={es} month={mesVisible} onMonthChange={setMesVisible} today={fechaLocal(diaActual)} selected={fecha} onSelect={v => { setPagina(1); setFecha(v); if (v) setCalendarioAbierto(false); }} /> : <>
+                      <Calendar mode="range" locale={es} month={mesVisible} onMonthChange={setMesVisible} today={fechaLocal(diaActual)} selected={rango} onSelect={v => { setPagina(1); setRango(v); }} numberOfMonths={1} />
+                      <Button variant="outline" onClick={() => { setPagina(1); setRango(undefined); }}>Limpiar</Button>
+                      <Button className="ml-2" disabled={!rango?.from || !rango?.to} onClick={() => setCalendarioAbierto(false)}>Aplicar</Button>
+                    </>}
+                  </PopoverContent>
+                </Popover>}
                 {/* Botón Exportar PDF: visible también en móvil, ancho completo */}
                 <Button
                   onClick={exportToPDF}
-                  disabled={exportando || cargando || !!error}
+                  disabled={exportando || cargando || !!error || incompleto}
                   variant="outline"
                   className="w-full sm:w-auto gap-2 bg-red-600 hover:bg-red-700 text-white"
                 >
@@ -510,6 +446,7 @@ const HistorialPagos = () => {
               </div>
             </div>
           </div>
+          {busqueda.trim() && <p className="text-sm text-muted-foreground">Buscando en todo el historial, sin filtro de fechas.</p>}
         </CardHeader>
         <CardContent className="p-0">
           {/* ====== VISTA MÓVIL (cards) ====== */}
@@ -550,7 +487,7 @@ const HistorialPagos = () => {
                       </TableCell>
                       <TableCell>{pago.doctor}</TableCell>
                       <TableCell>
-                        {format(new Date(pago.fecha), "PP", { locale: es })}
+                        {fechaPago(pago.fecha, "PP")}
                       </TableCell>
                       <TableCell>
                         {Array.isArray(pago.concepto) ? (
@@ -598,7 +535,34 @@ const HistorialPagos = () => {
             <div className="flex flex-wrap justify-center items-center gap-2">
               <Button variant="outline" size="sm" disabled={cargando || pagina <= 1} onClick={() => setPagina(1)}>Primera</Button>
               <Button variant="outline" size="sm" disabled={cargando || pagina <= 1} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
-              <span className="text-sm whitespace-nowrap">{pagina} / {totalPaginas}</span>
+              <div className="flex items-center gap-1 text-sm whitespace-nowrap">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  aria-label="Ir a la página"
+                  className="h-8 w-16 px-1 text-center"
+                  value={paginaEscrita}
+                  disabled={cargando}
+                  onChange={(e) => {
+                    if (/^\d*$/.test(e.target.value)) setPaginaEscrita(e.target.value);
+                  }}
+                  onBlur={() => {
+                    const numero = Number(paginaEscrita);
+                    const destino = paginaEscrita.trim() !== "" && Number.isSafeInteger(numero)
+                      ? Math.min(totalPaginas, Math.max(1, numero))
+                      : pagina;
+                    setPaginaEscrita(String(destino));
+                    setPagina(destino);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+                <span>/ {totalPaginas}</span>
+              </div>
               <Button variant="outline" size="sm" disabled={cargando || pagina >= totalPaginas} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
               <Button variant="outline" size="sm" disabled={cargando || pagina >= totalPaginas} onClick={() => setPagina(totalPaginas)}>Última</Button>
             </div>

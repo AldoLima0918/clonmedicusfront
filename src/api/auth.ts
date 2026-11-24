@@ -1,4 +1,5 @@
 // src/api/auth.ts
+
 import { User } from "../types/auth";
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -19,6 +20,19 @@ export interface ApiUser {
   username: string;
 }
 
+const mapRole = (role: number): string => {
+  switch (role) {
+    case 0:
+      return "secretaria";
+    case 1:
+      return "doctor";
+    case 2:
+      return "administrador";
+    default:
+      return "usuario";
+  }
+};
+
 export const login = async (
   username: string,
   password: string
@@ -33,24 +47,13 @@ export const login = async (
 
   if (!response.ok) {
     const errorData = await response.json();
-    throw new Error(errorData.message || "Error en el inicio de sesión");
+
+    throw new Error(
+      errorData.message || "Error en el inicio de sesión"
+    );
   }
 
   const data = await response.json();
-
-  // Mapear el rol numérico a string
-  const mapRole = (role: number): string => {
-    switch (role) {
-      case 0:
-        return "secretaria";
-      case 1:
-        return "doctor";
-      case 2:
-        return "administrador";
-      default:
-        return "usuario";
-    }
-  };
 
   return {
     user: {
@@ -85,27 +88,25 @@ export const verifyToken = async (
     const data = await response.json();
 
     if (data.success && data.user) {
-      const mapRole = (role: number): string => {
-        switch (role) {
-          case 0:
-            return "secretaria";
-          case 1:
-            return "doctor";
-          case 2:
-            return "administrador";
-          default:
-            return "usuario";
-        }
-      };
+      const storedUser = getStoredUser();
+
+      const sameUser = storedUser?.id === data.user.id;
 
       return {
         isValid: true,
         user: {
           id: data.user.id,
-          name: data.user.name,
+          name:
+            data.user.name ??
+            (sameUser ? storedUser?.name : undefined) ??
+            data.user.username,
           role: mapRole(data.user.role),
-          email: data.user.email,
-          phone: data.user.phone,
+          email:
+            data.user.email ??
+            (sameUser ? storedUser?.email : undefined),
+          phone:
+            data.user.phone ??
+            (sameUser ? storedUser?.phone : undefined),
           username: data.user.username,
         },
       };
@@ -113,55 +114,93 @@ export const verifyToken = async (
 
     return { isValid: false };
   } catch (error) {
-    console.error("Error verifying token:", error);
+    console.error("Error verificando token:", error);
+
     return { isValid: false };
   }
 };
 
 /**
- * Cierra sesión:
- * 1. Notifica al backend para marcar `en_linea = false`.
- * 2. Limpia el estado local (localStorage).
+ * Limpia exclusivamente la sesión local.
+ * No realiza peticiones al backend.
  *
- * Usamos `keepalive: true` para garantizar que la petición se envíe
- * incluso si el usuario cierra la pestaña o navega inmediatamente.
+ * Se utiliza cuando el token es inválido,
+ * expirado o inexistente.
  */
-export const logout = async (): Promise<void> => {
-  const token = localStorage.getItem("token");
-
-  if (token) {
-    try {
-      await fetch(`${API_URL}/auth/logout`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        keepalive: true,
-      });
-    } catch (error) {
-      // No bloqueamos el logout local si falla la red
-      console.warn("No se pudo notificar al backend sobre el logout:", error);
-    }
-  }
-
-  // Limpiar localStorage en el frontend
+export const clearAuthData = (): void => {
   localStorage.removeItem("currentUser");
   localStorage.removeItem("token");
 };
 
-// Guardar datos en localStorage
-export const saveAuthData = (user: User, token: string): void => {
+/**
+ * Cierra la sesión:
+ *
+ * 1. Recupera el token actual.
+ * 2. Limpia inmediatamente la sesión local.
+ * 3. Notifica al backend para marcar en_linea = false.
+ */
+export const logout = async (): Promise<void> => {
+  const token = getStoredToken();
+
+  clearAuthData();
+
+  if (!token) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_URL}/auth/logout`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      keepalive: true,
+    });
+
+    // La sesión local ya se encuentra cerrada.
+    if (response.status === 401 || response.status === 403) {
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Error al cerrar sesión en el servidor: ${response.status}`
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "No se pudo notificar al backend sobre el logout:",
+      error
+    );
+  }
+};
+
+// Guardar datos en localStorage.
+export const saveAuthData = (
+  user: User,
+  token: string
+): void => {
   localStorage.setItem("currentUser", JSON.stringify(user));
   localStorage.setItem("token", token);
 };
 
-// Obtener datos del localStorage
+// Obtener usuario almacenado.
 export const getStoredUser = (): User | null => {
   const stored = localStorage.getItem("currentUser");
-  return stored ? JSON.parse(stored) : null;
+
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
 };
 
+// Obtener token almacenado.
 export const getStoredToken = (): string | null => {
   return localStorage.getItem("token");
 };
